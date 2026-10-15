@@ -23,7 +23,7 @@ private:
     using Getter = std::function<double(const Clip &)>;
     using Setter = std::function<void(Clip &, double)>;
     QDoubleSpinBox *addSpin(QFormLayout *f, const QString &label, double mn, double mx, double step, int dec, const QString &suffix,
-                            double scale, Getter g, Setter s, const QString &tip = {});
+                            double scale, Getter g, Setter s, const QString &tip = {}, bool multi = true);
     QCheckBox *addCheck(QFormLayout *f, const QString &label, std::function<bool(const Clip &)> g, std::function<void(Clip &, bool)> s, const QString &tip = {});
     void edit(const QString &what, const std::function<void(Clip &)> &fn);
 

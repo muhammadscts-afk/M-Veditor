@@ -54,8 +54,6 @@ bool isVideoFormat(const QString &id) { return formatById(id).video; }
 
 struct AudioSrc { int input; const Clip *clip; const Track *track; const MediaItem *media; };
 
-bool anySolo(const Project &p) { for (auto &t : p.tracks) if (t.solo) return true; return false; }
-bool audible(const Project &p, const Track &t) { return !t.muted && (!anySolo(p) || t.solo); }
 
 const Clip *nextOnTrack(const Project &p, const Clip &c) {
     const Clip *best = nullptr;
@@ -211,12 +209,14 @@ RenderPlan RenderGraph::build(const Project &p, const ExportOptions &o, bool all
         QString base = nl("b");
         fc << QString("color=c=black:s=%1x%2:r=%3:d=%4[%5]").arg(W).arg(H).arg(num(F), num(total + 1), base);
         int bottomIdx = -1;
-        for (int i = p.tracks.size() - 1; i >= 0; --i) if (p.tracks[i].type == TrackType::Video) { bottomIdx = i; break; }
+        for (int i = 0; i < p.tracks.size(); ++i) if (p.tracks[i].type == TrackType::Video) { bottomIdx = i; break; }   // lowest layer = first video track
         int titleN = 0;
-        for (int ti = p.tracks.size() - 1; ti >= 0; --ti) {          // bottom track first
+        // Layer order: video tracks from the first to the last (later = on top), then title tracks on top of everything.
+        for (int pass = 0; pass < 2; ++pass) for (int ti = 0; ti < p.tracks.size(); ++ti) {
             const Track &tr = p.tracks[ti];
-            if (tr.hidden) continue;
-            if (tr.type != TrackType::Video && tr.type != TrackType::Title) continue;
+            if (!p.trackVisible(tr)) continue;
+            if (pass == 0 && tr.type != TrackType::Video) continue;
+            if (pass == 1 && tr.type != TrackType::Title) continue;
             const bool bottom = (ti == bottomIdx);
             for (const Clip *cp : p.clipsOnTrack(tr.id)) {
                 const Clip &c = *cp;
@@ -334,7 +334,7 @@ RenderPlan RenderGraph::build(const Project &p, const ExportOptions &o, bool all
     // ------------------------------------------------------------------ audio
     QStringList mixIn;
     for (const Track &tr : p.tracks) {
-        if (tr.type == TrackType::Title || !audible(p, tr)) continue;
+        if (tr.type == TrackType::Title || !p.trackAudible(tr)) continue;
         for (const Clip *cp : p.clipsOnTrack(tr.id)) {
             const Clip &c = *cp;
             const MediaItem *m = p.mediaById(c.mediaId);

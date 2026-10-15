@@ -2,6 +2,7 @@
 #include "AppSettings.h"
 #include "FfmpegTools.h"
 #include "MainWindow.h"
+#include "PreviewMonitor.h"
 #include "Theme.h"
 #include <QApplication>
 #include <QDir>
@@ -10,7 +11,9 @@
 #include <QJsonDocument>
 #include <QProcess>
 #include <QTemporaryDir>
+#include <QMenu>
 #include <QTest>
+#include <QToolButton>
 #include <QTimer>
 #include <iostream>
 
@@ -97,6 +100,82 @@ int main(int argc, char **argv) {
     w.findChild<QAction *>("dup")->trigger();
     w.findChild<QAction *>("copy")->trigger();
     w.findChild<QAction *>("paste")->trigger();
+
+    std::cout << "- track order, Add track button" << std::endl;
+    {
+        QStringList names; for (auto &t : m->project().tracks) names << t.name;
+        CHECK(names.indexOf("Video 1") >= 0 && names.indexOf("Video 1") < names.indexOf("Video 2"), "Video 1 is listed above Video 2 (ascending)");
+        QToolButton *addBtn = nullptr;
+        for (auto *b : w.timeline()->viewport()->findChildren<QToolButton *>()) if (b->text().contains("Add track")) addBtn = b;
+        CHECK(addBtn && addBtn->menu() && addBtn->menu()->actions().size() == 5, "Add track button with a 5-entry drop-down menu");
+        const int before = m->project().tracks.size();
+        if (addBtn && addBtn->menu()) addBtn->menu()->actions().first()->trigger();
+        CHECK(m->project().tracks.size() == before + 1, "Add track > Video track adds a track");
+        int v3 = -1, v2 = -1; for (int i = 0; i < m->project().tracks.size(); ++i) { if (m->project().tracks[i].name == "Video 3") v3 = i; if (m->project().tracks[i].name == "Video 2") v2 = i; }
+        CHECK(v3 == v2 + 1, "new video track is numbered 3 and placed under Video 2");
+        // reorder: move the new track to the top via the same mutation the drag/menu uses, then undo
+        const QString firstId = m->project().tracks[0].id;
+        m->mutate("Move track", [](Project &p) { p.tracks.swapItemsAt(0, 1); });
+        CHECK(m->project().tracks[1].id == firstId, "tracks can be reordered");
+        m->undoStack()->undo();
+        CHECK(m->project().tracks[0].id == firstId, "track reorder is undoable");
+        m->undoStack()->undo();   // remove the added track again
+        CHECK(m->project().tracks.size() == before, "undo removes the added track");
+    }
+    std::cout << "- multi-selection" << std::endl;
+    {
+        QStringList v1clips; for (auto &c : m->project().clips) if (c.trackId == trV1) v1clips << c.id;
+        CHECK(v1clips.size() >= 2, "there are at least two segments on Video 1");
+        m->setSelection(v1clips.mid(0, 2));
+        CHECK(m->selectedClips().size() == 2 && m->isSelected(v1clips[0]) && m->isSelected(v1clips[1]), "two segments are selected at once");
+        m->toggleClip(v1clips[1]);
+        CHECK(m->selectedClips().size() == 1, "Ctrl-click toggles a segment out of the selection");
+        m->addToSelection(v1clips[1]);
+        const int n = m->project().clips.size();
+        w.findChild<QAction *>("delete")->trigger();
+        CHECK(m->project().clips.size() == n - 2, "Delete removes all selected segments");
+        m->undoStack()->undo();
+        CHECK(m->project().clips.size() == n, "undo restores both");
+        m->setSelection(v1clips.mid(0, 2));
+        w.findChild<QAction *>("dup")->trigger();
+        CHECK(m->project().clips.size() == n + 2 && m->selectedClips().size() == 2, "Duplicate copies every selected segment");
+        m->undoStack()->undo();
+        w.findChild<QAction *>("selectall")->trigger();
+        CHECK(m->selectedClips().size() == m->project().clips.size(), "Select all");
+        m->selectClip({});
+    }
+    std::cout << "- seek bar click, rendered preview play, stale preview" << std::endl;
+    {
+        auto *prev = w.findChild<PreviewMonitor *>();
+        auto *slider = prev ? prev->findChild<SeekSlider *>() : nullptr;
+        CHECK(slider != nullptr, "seek slider present");
+        if (slider) {
+            m->setPlayhead(0);
+            const double dur = m->project().duration();
+            QTest::mouseClick(slider, Qt::LeftButton, Qt::NoModifier, QPoint(slider->width() / 2, slider->height() / 2));
+            CHECK(std::abs(m->playhead() - dur / 2) < dur * 0.08, QString("one click on the middle of the seek bar jumps there (%1 of %2)").arg(m->playhead()).arg(dur));
+            QTest::mouseClick(slider, Qt::LeftButton, Qt::NoModifier, QPoint(slider->width() - 12, slider->height() / 2));
+            CHECK(m->playhead() > dur * 0.85, "click near the end jumps near the end");
+            QTest::mouseClick(slider, Qt::LeftButton, Qt::NoModifier, QPoint(12, slider->height() / 2));
+            CHECK(m->playhead() < dur * 0.1, "click near the start jumps near the start");
+        }
+        if (prev) {
+            m->setPlayhead(0.5);
+            prev->togglePlay();       // Timeline mode: renders a full preview, then plays it
+            CHECK(waitFor([&] { return prev->mode() == PreviewMonitor::Mode::Rendered; }, 120000), "Play renders the full preview and switches to the rendered player");
+            QTest::qWait(300);
+            m->mutate("edit during preview", [&](Project &p) { p.markers.push_back({1.0, "x"}); });
+            CHECK(prev->mode() == PreviewMonitor::Mode::Timeline, "editing makes the rendered preview stale (back to timeline mode)");
+            m->undoStack()->undo();
+        }
+    }
+    std::cout << "- marker colour regions" << std::endl;
+    m->mutate("m1", [](Project &p) { p.markers.push_back({2.0, "A"}); p.markers.push_back({5.0, "B"}); });
+    CHECK(TimelineView::regionColor(m->project(), 0) != TimelineView::regionColor(m->project(), 1), "regions have different colours");
+    CHECK(TimelineView::regionColor(m->project(), 0).alpha() < 60, "regions are very transparent");
+    QTest::qWait(200);
+    w.grab().save("/tmp/mveditor_regions.png");
+    m->undoStack()->undo();
 
     std::cout << "- save and reopen (project format)" << std::endl;
     const QString projPath = dir.filePath("my project.mveproj");

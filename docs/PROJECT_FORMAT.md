@@ -17,7 +17,8 @@ UTF-8 JSON. All times are seconds (floating point). The file never contains medi
       "sizeBytes": 23456789, "bitrate": 15000000,
       "videoCodec": "h264", "audioCodec": "aac", "container": "mov,mp4,m4a,3gp,3g2,mj2" }
   ],
-  "tracks": [                         // index 0 = top of the timeline (rendered last / on top)
+  "tracks": [                         // listed top to bottom. Video tracks later in the list are composited ON TOP of earlier ones;
+                                      // title tracks are always composited above all video tracks
     { "id": "t1", "name": "Video 1", "type": "video",   // video | audio | music | voice | title
       "muted": false, "solo": false, "locked": false, "hidden": false, "volume": 1.0, "height": 56 }
   ],
@@ -43,13 +44,13 @@ UTF-8 JSON. All times are seconds (floating point). The file never contains medi
                  "boxOpacity": 0.5, "posX": 0.5, "posY": 0.85, "kind": "title" }   // only for title clips
     }
   ],
-  "markers": [ { "time": 4.2, "name": "M1" } ]
+  "markers": [ { "time": 4.2, "name": "M1", "color": "#4285f4" } ]   // color optional: tint of the region starting at the marker
 }
 ```
 
 **Rendering rules**
-* Video tracks are composited bottom track first; later (upper) tracks overlay earlier ones. Title tracks are drawn on top.
-* Audio of every audible clip on every track (including the sound of video clips) is mixed. If any track has `solo`, only solo tracks are audible. `muted` tracks are silent; `hidden` hides video only.
+* Video tracks are composited in list order: Video 1 first, later tracks (lower in the list) overlay earlier ones. Title tracks are drawn on top of everything. Projects saved by version 1.0.0 of M Veditor used the opposite order; re-arrange the tracks if overlays look reversed.
+* Audio of every audible clip on every track (including the sound of video clips) is mixed. If any track has `solo`, only solo tracks are audible; if a video/title track has `solo`, only soloed video/title tracks are shown. `muted` tracks are silent; `hidden` hides picture only.
 * Clips on one track must not overlap; the editor enforces this.
 * A project must contain a track for each clip's `trackId`; missing files are flagged and can be relinked.
 

@@ -9,6 +9,10 @@
 #include <QActionGroup>
 #include <QApplication>
 #include <QCloseEvent>
+#include <QColorDialog>
+#include <QCryptographicHash>
+#include <QGuiApplication>
+#include <QScreen>
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QDirIterator>
@@ -84,6 +88,13 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
             bool ok; QString n = QInputDialog::getText(this, tr("Marker"), tr("Name:"), QLineEdit::Normal, mk[best].name, &ok);
             if (ok) m->mutate(tr("Rename marker"), [best, n](Project &p) { p.markers[best].name = n; });
         });
+        menu.addAction(tr("Change colour of the region after the nearest marker…"), [this, t] {
+            int best = -1; double bd = 1e9; const auto &mk = m->project().markers;
+            for (int i = 0; i < mk.size(); ++i) if (std::fabs(mk[i].time - t) < bd) { bd = std::fabs(mk[i].time - t); best = i; }
+            if (best < 0) return;
+            const QColor col = QColorDialog::getColor(QColor(mk[best].color.isEmpty() ? "#4285f4" : mk[best].color), this, tr("Region colour"));
+            if (col.isValid()) m->mutate(tr("Marker colour"), [best, col](Project &p) { p.markers[best].color = col.name(); });
+        });
         menu.exec(gp);
     });
     connect(m_lib, &MediaLibrary::importRequested, a["import"], &QAction::trigger);
@@ -106,7 +117,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         menu.addAction(tr("Remove from project"), [this, id] { removeMedia(id); });
         menu.exec(gp);
     });
-    connect(m_prev, &PreviewMonitor::renderPreviewRequested, this, &MainWindow::renderPreview);
+    connect(m_prev, &PreviewMonitor::renderPreviewRequested, this, [this] { renderPreview(true); });
+    connect(m_prev, &PreviewMonitor::timelinePlayRequested, this, &MainWindow::playTimeline);
+    connect(m_tl, &TimelineView::addTrackRequested, this, [this](int t) { addTrack(TrackType(t)); });
     connect(m_prev, &PreviewMonitor::message, this, [this](const QString &t) { notify(t); });
     connect(m_prev, &PreviewMonitor::addToTimelineRequested, this, [this](const QString &id, double in, double out) { addClipFromMedia(id, {}, m->playhead(), in, out); });
     connect(m_props, &PropertiesPanel::speedDialogRequested, this, &MainWindow::applySpeedDialog);
@@ -124,9 +137,18 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     m_lock->setStaleLockTime(0);
     m_primaryInstance = m_lock->tryLock(100);
 
-    restoreGeometry(AppSettings::s().value("ui/geometry").toByteArray());
-    restoreState(AppSettings::s().value("ui/state").toByteArray());
-    split->restoreState(AppSettings::s().value("ui/split").toByteArray());
+    {   // make sure the window always fits the screen (fixes panels hidden beyond the screen edge)
+        const QByteArray g = AppSettings::s().value("ui/geometry").toByteArray();
+        const bool restored = !g.isEmpty() && restoreGeometry(g);
+        QScreen *sc = QGuiApplication::primaryScreen();
+        const QRect av = sc ? sc->availableGeometry() : QRect(0, 0, 1280, 720);
+        if (!restored || width() > av.width() || height() > av.height() || !av.intersects(frameGeometry())) m_startMax = true;
+        if (!m_startMax) {
+            restoreState(AppSettings::s().value("ui/state").toByteArray());
+            split->restoreState(AppSettings::s().value("ui/split").toByteArray());
+        }
+    }
+    m_tl->setRegionsVisible(AppSettings::s().value("timeline/regions", true).toBool());
     updateActions(); updateTitle();
 }
 
@@ -160,8 +182,8 @@ void MainWindow::buildDocks() {
     m_dockLog->hide();
     tabifyDockWidget(m_dockProps, m_dockExp);
     m_dockProps->raise();
-    m_dockLib->setMinimumWidth(240); m_dockProps->setMinimumWidth(300);
-    resizeDocks({m_dockLib, m_dockProps}, {260, 330}, Qt::Horizontal);
+    m_dockLib->setMinimumWidth(190); m_dockProps->setMinimumWidth(260);
+    resizeDocks({m_dockLib, m_dockProps}, {230, 300}, Qt::Horizontal);
 }
 
 // ======================================================================== actions
@@ -193,7 +215,10 @@ void MainWindow::buildActions() {
     add("split", tr("&Split at playhead"), QKeySequence("S"), [this] { splitAtPlayhead(); }, tr("Cut the selected clip (or every clip under the playhead) in two (S)"));
     add("delete", tr("&Delete clip"), QKeySequence::Delete, [this] { deleteSelected(false); }, tr("Delete the selected clip (Del)"));
     add("ripple", tr("Ripple delete (close the gap)"), QKeySequence("Shift+Delete"), [this] { deleteSelected(true); });
+    add("selectall", tr("Select &all clips"), QKeySequence::SelectAll, [this] { QStringList ids; for (auto &c : m->project().clips) ids << c.id; m->setSelection(ids); });
     add("marker", tr("Add &marker"), QKeySequence("M"), [this] { addMarker(m->playhead()); });
+    add("regions", tr("Colour regions between markers"), {}, [this] { m_tl->setRegionsVisible(a["regions"]->isChecked()); AppSettings::s().setValue("timeline/regions", a["regions"]->isChecked()); });
+    a["regions"]->setCheckable(true); a["regions"]->setChecked(AppSettings::s().value("timeline/regions", true).toBool());
     add("snap", tr("Snapping"), {}, [this] { m_tl->setSnapping(a["snap"]->isChecked()); AppSettings::setSnapping(a["snap"]->isChecked()); });
     a["snap"]->setCheckable(true); a["snap"]->setChecked(AppSettings::snapping());
 
@@ -312,7 +337,7 @@ void MainWindow::buildMenus() {
     auto *undo = edit->actions().at(0); undo->setShortcut(QKeySequence::Undo);
     auto *redo = edit->actions().at(1); redo->setShortcuts({QKeySequence::Redo, QKeySequence("Ctrl+Y")});
     edit->addSeparator();
-    for (auto *k : {"cut", "copy", "paste", "dup"}) edit->addAction(a[k]);
+    for (auto *k : {"cut", "copy", "paste", "dup", "selectall"}) edit->addAction(a[k]);
     edit->addSeparator();
     for (auto *k : {"split", "delete", "ripple"}) edit->addAction(a[k]);
     edit->addSeparator(); edit->addAction(a["marker"]); edit->addAction(a["snap"]);
@@ -345,7 +370,7 @@ void MainWindow::buildMenus() {
     auto *themeGroup = new QActionGroup(this);
     for (auto *k : {"dark", "light"}) { a[k]->setCheckable(true); themeGroup->addAction(a[k]); view->addAction(a[k]); }
     a[AppSettings::darkTheme() ? "dark" : "light"]->setChecked(true);
-    view->addSeparator(); view->addAction(a["proxies"]);
+    view->addSeparator(); view->addAction(a["proxies"]); view->addAction(a["regions"]);
     view->addSeparator();
     for (auto *d : {m_dockLib, m_dockProps, m_dockExp, m_dockLog}) view->addAction(d->toggleViewAction());
     view->addSeparator(); view->addAction(a["resetlayout"]);
@@ -629,8 +654,7 @@ void MainWindow::renameMedia(const QString &id) {
 QString MainWindow::defaultTrackFor(const MediaItem &mi, bool audioOnly) const {
     const Project &p = m->project();
     if (mi.kind == "audio" || audioOnly) return p.firstTrackOfType(TrackType::Audio);
-    for (int i = p.tracks.size() - 1; i >= 0; --i) if (p.tracks[i].type == TrackType::Video) return p.tracks[i].id;   // lowest video track
-    return {};
+    return p.firstTrackOfType(TrackType::Video);                         // main footage goes on Video 1
 }
 
 void MainWindow::addClipFromMedia(const QString &mediaId, const QString &trackId, double start, double in, double out) {
@@ -650,9 +674,9 @@ void MainWindow::addClipFromMedia(const QString &mediaId, const QString &trackId
 }
 
 void MainWindow::editSelected(const QString &what, const std::function<void(Clip &)> &fn) {
-    const QString id = m->selectedClip();
-    if (id.isEmpty()) { notify(tr("Select a clip on the timeline first.")); return; }
-    m->mutate(what, [id, fn](Project &p) { if (Clip *c = p.clipById(id)) fn(*c); });
+    const QStringList ids = m->selectedClips();
+    if (ids.isEmpty()) { notify(tr("Select a clip on the timeline first.")); return; }
+    m->mutate(what, [ids, fn](Project &p) { for (const QString &id : ids) if (Clip *c = p.clipById(id)) fn(*c); });
 }
 void MainWindow::setTransition(const QString &t) {
     editSelected(tr("Set transition"), [t](Clip &c) { c.fx.transition = t; if (t != "none" && c.fx.transitionDur <= 0) c.fx.transitionDur = 1.0; });
@@ -663,10 +687,10 @@ void MainWindow::splitAtPlayhead() {
     const double t = m->playhead();
     const Project &p = m->project();
     QStringList targets;
-    const Clip *sel = p.clipById(m->selectedClip());
     auto inside = [&](const Clip &c) { return t > c.start + 0.02 && t < c.end() - 0.02; };
-    if (sel && inside(*sel)) targets << sel->id;
-    else for (auto &c : p.clips) if (inside(c) && p.trackById(c.trackId) && !p.trackById(c.trackId)->locked) targets << c.id;
+    for (const QString &id : m->selectedClips()) if (const Clip *c = p.clipById(id)) if (inside(*c)) targets << c->id;
+    if (targets.isEmpty())
+        for (auto &c : p.clips) if (inside(c) && p.trackById(c.trackId) && !p.trackById(c.trackId)->locked) targets << c.id;
     if (targets.isEmpty()) { notify(tr("Move the playhead over a clip to split it.")); return; }
     m->mutate(tr("Split clip"), [targets, t](Project &pr) {
         for (const QString &id : targets) {
@@ -679,67 +703,104 @@ void MainWindow::splitAtPlayhead() {
             pr.clips.push_back(right);
         }
     });
-    notify(tr("Split at %1").arg(humanTime(t, true)));
+    notify(tr("Split %1 clip(s) at %2").arg(targets.size()).arg(humanTime(t, true)));
 }
 
 void MainWindow::deleteSelected(bool ripple) {
-    const QString id = m->selectedClip();
-    const Clip *c = m->project().clipById(id);
-    if (!c) { notify(tr("Select a clip first.")); return; }
-    const QString track = c->trackId; const double s = c->start, d = c->duration();
-    m->mutate(tr("Delete clip"), [=](Project &p) {
-        p.clips.erase(std::remove_if(p.clips.begin(), p.clips.end(), [&](const Clip &x) { return x.id == id; }), p.clips.end());
-        if (ripple) for (Clip &x : p.clips) if (x.trackId == track && x.start >= s + d - 1e-6) x.start = std::max(0.0, x.start - d);
+    const QStringList ids = m->selectedClips();
+    if (ids.isEmpty()) { notify(tr("Select a clip first.")); return; }
+    m->mutate(ids.size() > 1 ? tr("Delete clips") : tr("Delete clip"), [ids, ripple](Project &p) {
+        struct R { QString track; double s, e; };
+        QVector<R> removed;
+        for (const QString &id : ids) if (const Clip *c = p.clipById(id)) removed.push_back({c->trackId, c->start, c->end()});
+        p.clips.erase(std::remove_if(p.clips.begin(), p.clips.end(), [&](const Clip &x) { return ids.contains(x.id); }), p.clips.end());
+        if (ripple) for (Clip &x : p.clips) {
+            double shift = 0;
+            for (const R &r : removed) if (r.track == x.trackId && x.start >= r.e - 1e-6) shift += r.e - r.s;
+            x.start = std::max(0.0, x.start - shift);
+        }
     });
     m->selectClip({});
 }
 void MainWindow::duplicateSelected() {
-    const Clip *c = m->project().clipById(m->selectedClip());
-    if (!c) return;
-    Clip n = *c; n.id = newId("c");
-    n.start = m->project().resolveOverlap(c->trackId, c->end(), c->duration());
-    const QString id = n.id;
-    m->mutate(tr("Duplicate clip"), [n](Project &p) { p.clips.push_back(n); });
-    m->selectClip(id);
+    QVector<Clip> src;
+    for (const QString &id : m->selectedClips()) if (const Clip *c = m->project().clipById(id)) src.push_back(*c);
+    if (src.isEmpty()) return;
+    QStringList created;
+    m->mutate(tr("Duplicate clips"), [&](Project &p) {
+        for (const Clip &c : src) {
+            Clip n = c; n.id = newId("c");
+            n.start = p.resolveOverlap(n.trackId, c.end(), c.duration());
+            p.clips.push_back(n); created << n.id;
+        }
+    });
+    m->setSelection(created);
 }
 void MainWindow::copySelected(bool cut) {
-    const Clip *c = m->project().clipById(m->selectedClip());
-    if (!c) return;
-    m_clipboard = {*c};
+    m_clipboard.clear();
+    for (const QString &id : m->selectedClips()) if (const Clip *c = m->project().clipById(id)) m_clipboard.push_back(*c);
+    if (m_clipboard.isEmpty()) return;
     updateActions();
-    if (cut) deleteSelected(false); else notify(tr("Clip copied."));
+    if (cut) deleteSelected(false); else notify(tr("%1 clip(s) copied.").arg(m_clipboard.size()));
 }
 void MainWindow::pasteClip() {
     if (m_clipboard.isEmpty()) return;
-    Clip n = m_clipboard.first(); n.id = newId("c");
-    const Project &p = m->project();
-    const MediaItem *mi = n.isTitle() ? nullptr : p.mediaById(n.mediaId);
-    if (!n.isTitle() && !mi) { notify(tr("The copied clip's media is no longer in the project."), true); return; }
-    const Track *tr0 = p.trackById(n.trackId);
-    if (!tr0 || !TimelineView::compatible(n, mi, *tr0)) {
-        n.trackId.clear();
-        for (auto &t : p.tracks) if (TimelineView::compatible(n, mi, t)) { n.trackId = t.id; break; }
-        if (n.trackId.isEmpty()) { notify(tr("There is no suitable track to paste into."), true); return; }
-    }
-    n.start = p.resolveOverlap(n.trackId, m->playhead(), n.duration());
-    const QString id = n.id;
-    m->mutate(tr("Paste clip"), [n](Project &pr) { pr.clips.push_back(n); });
-    m->selectClip(id);
+    double base = 1e12;
+    for (const Clip &c : m_clipboard) base = std::min(base, c.start);
+    const QVector<Clip> src = m_clipboard;
+    const double at = m->playhead();
+    QStringList created; QString problem;
+    m->mutate(tr("Paste clips"), [&](Project &p) {
+        for (Clip n : src) {
+            n.id = newId("c");
+            const MediaItem *mi = n.isTitle() ? nullptr : p.mediaById(n.mediaId);
+            if (!n.isTitle() && !mi) { problem = tr("A copied clip's media is no longer in the project."); continue; }
+            const Track *t0 = p.trackById(n.trackId);
+            if (!t0 || !TimelineView::compatible(n, mi, *t0)) {
+                n.trackId.clear();
+                for (auto &t : p.tracks) if (TimelineView::compatible(n, mi, t)) { n.trackId = t.id; break; }
+                if (n.trackId.isEmpty()) { problem = tr("There is no suitable track to paste into."); continue; }
+            }
+            n.start = p.resolveOverlap(n.trackId, at + (n.start - base), n.duration());
+            p.clips.push_back(n); created << n.id;
+        }
+    });
+    if (!problem.isEmpty()) notify(problem, true);
+    m->setSelection(created);
 }
 
 void MainWindow::detachAudio() {
-    const Clip *c = m->project().clipById(m->selectedClip());
-    if (!c || c->isTitle()) { notify(tr("Select a video clip first.")); return; }
-    const MediaItem *mi = m->project().mediaById(c->mediaId);
-    if (!mi || !mi->hasAudio || mi->kind == "audio") { notify(tr("This clip has no audio that can be detached.")); return; }
-    const QString id = c->id;
-    Clip a2; a2.id = newId("c"); a2.mediaId = c->mediaId; a2.in = c->in; a2.out = c->out; a2.start = c->start;
-    a2.fx.speed = c->fx.speed; a2.fx.preservePitch = c->fx.preservePitch; a2.fx.volume = c->fx.volume; a2.fx.reverse = c->fx.reverse;
-    a2.trackId = m->project().firstTrackOfType(TrackType::Audio);
-    if (a2.trackId.isEmpty()) { notify(tr("There is no audio track. Add one first."), true); return; }
-    a2.start = m->project().resolveOverlap(a2.trackId, c->start, c->duration());
-    m->mutate(tr("Detach audio"), [id, a2](Project &p) { if (Clip *x = p.clipById(id)) x->fx.mute = true; p.clips.push_back(a2); });
-    notify(tr("Audio detached to the audio track."));
+    const QString audioTrack = m->project().firstTrackOfType(TrackType::Audio);
+    if (audioTrack.isEmpty()) { notify(tr("There is no audio track. Add one first."), true); return; }
+    QStringList ids;
+    for (const QString &id : m->selectedClips()) {
+        const Clip *c = m->project().clipById(id);
+        const MediaItem *mi = c && !c->isTitle() ? m->project().mediaById(c->mediaId) : nullptr;
+        if (mi && mi->hasAudio && mi->kind == "video") ids << id;
+    }
+    if (ids.isEmpty()) { notify(tr("Select a video clip that has sound first.")); return; }
+    m->mutate(tr("Detach audio"), [ids, audioTrack](Project &p) {
+        for (const QString &id : ids) {
+            Clip *c = p.clipById(id); if (!c) continue;
+            Clip a2; a2.id = newId("c"); a2.mediaId = c->mediaId; a2.in = c->in; a2.out = c->out; a2.trackId = audioTrack;
+            a2.fx.speed = c->fx.speed; a2.fx.preservePitch = c->fx.preservePitch; a2.fx.volume = c->fx.volume; a2.fx.reverse = c->fx.reverse;
+            a2.start = p.resolveOverlap(audioTrack, c->start, c->duration());
+            c->fx.mute = true;
+            p.clips.push_back(a2);
+        }
+    });
+    notify(tr("Audio of %1 clip(s) detached to the audio track.").arg(ids.size()));
+}
+
+void MainWindow::tidyTrack(Project &p, const QString &trackId) {      // push clips later in time if a longer clip now overlaps them
+    QVector<QString> order;
+    for (const Clip *c : p.clipsOnTrack(trackId)) order << c->id;
+    double end = 0;
+    for (const QString &id : order) {
+        Clip *c = p.clipById(id);
+        if (c->start < end - 1e-6) c->start = end;
+        end = c->end();
+    }
 }
 
 void MainWindow::applySpeedDialog() {
@@ -750,30 +811,30 @@ void MainWindow::applySpeedDialog() {
     SpeedDialog dlg(c->fx.speed, c->out - c->in, mi && mi->hasAudio, c->fx.preservePitch, c->fx.reverse, this);
     if (dlg.exec() != QDialog::Accepted) return;
     const double s = dlg.speed(); const bool pp = dlg.preservePitch(), rev = dlg.reverse(); const auto mode = dlg.audioMode();
-    const QString id = c->id;
-    Clip a2;
-    if (mode == SpeedDialog::DetachAudio) {
-        a2.id = newId("c"); a2.mediaId = c->mediaId; a2.in = c->in; a2.out = c->out; a2.trackId = m->project().firstTrackOfType(TrackType::Audio);
-        a2.fx.volume = c->fx.volume;
-        if (a2.trackId.isEmpty()) { notify(tr("There is no audio track to detach to."), true); return; }
-        a2.start = m->project().resolveOverlap(a2.trackId, c->start, c->duration());
-    }
-    m->mutate(tr("Change speed"), [=](Project &p) {
-        Clip *x = p.clipById(id); if (!x) return;
-        x->fx.speed = s; x->fx.preservePitch = pp; x->fx.reverse = rev;
-        if (mode == SpeedDialog::MuteAudio || mode == SpeedDialog::DetachAudio) x->fx.mute = true;
-        if (mode == SpeedDialog::KeepAudio) x->fx.mute = false;
-        if (mode == SpeedDialog::DetachAudio) p.clips.push_back(a2);
-        // keep the track tidy: push following clips if the new length overlaps them
-        double end = x->end();
-        for (const Clip *o : p.clipsOnTrack(x->trackId)) {
-            Clip *oc = p.clipById(o->id);
-            if (oc->id == id || oc->start < x->start) continue;
-            if (oc->start < end - 1e-6) oc->start = end;
-            end = oc->end();
+    const QString primary = c->id;
+    const QStringList ids = m->selectedClips();
+    const QString audioTrack = m->project().firstTrackOfType(TrackType::Audio);
+    if (mode == SpeedDialog::DetachAudio && audioTrack.isEmpty()) { notify(tr("There is no audio track to detach to."), true); return; }
+    int applied = 0;
+    m->mutate(tr("Change speed"), [&](Project &p) {
+        QStringList tracks;
+        for (const QString &id : ids) {
+            Clip *x = p.clipById(id); if (!x || x->isTitle()) continue;
+            const MediaItem *xm = p.mediaById(x->mediaId);
+            if (!xm || xm->kind == "image") continue;
+            Clip a2; bool detach = (mode == SpeedDialog::DetachAudio) && xm->hasAudio;
+            if (detach) { a2.id = newId("c"); a2.mediaId = x->mediaId; a2.in = x->in; a2.out = x->out; a2.trackId = audioTrack; a2.fx.volume = x->fx.volume; a2.start = p.resolveOverlap(audioTrack, x->start, x->duration()); }
+            x->fx.speed = s; x->fx.preservePitch = pp; x->fx.reverse = rev;
+            if (mode == SpeedDialog::MuteAudio || mode == SpeedDialog::DetachAudio) x->fx.mute = true;
+            if (mode == SpeedDialog::KeepAudio) x->fx.mute = false;
+            if (!tracks.contains(x->trackId)) tracks << x->trackId;
+            if (detach) p.clips.push_back(a2);
+            ++applied;
         }
+        for (const QString &t : tracks) tidyTrack(p, t);
     });
-    notify(tr("Speed set to %1× – the clip is now %2 long.").arg(QString::number(s, 'g', 4), humanTime(m->project().clipById(id)->duration(), true)));
+    if (const Clip *pc = m->project().clipById(primary))
+        notify(tr("Speed set to %1× on %2 clip(s) – the clip is now %3 long.").arg(QString::number(s, 'g', 4)).arg(applied).arg(humanTime(pc->duration(), true)));
 }
 
 void MainWindow::addTitle(const QString &kind) {
@@ -802,7 +863,7 @@ void MainWindow::addWatermark() {
     for (auto &x : m->project().media) if (QFileInfo(x.path) == QFileInfo(f)) mi = x;
     const bool isNew = !m->project().mediaById(mi.id);
     QString tid;
-    for (auto &t : m->project().tracks) if (t.type == TrackType::Video) { tid = t.id; break; }   // topmost video track
+    for (auto &t : m->project().tracks) if (t.type == TrackType::Video) tid = t.id;               // top layer = last video track
     Clip c; c.id = newId("c"); c.mediaId = mi.id; c.trackId = tid; c.in = 0;
     c.out = std::max(kImageSeconds, m->project().duration());
     c.fx.scale = 0.15; c.fx.posX = 0.97; c.fx.posY = 0.05; c.fx.opacity = 0.75;
@@ -811,14 +872,14 @@ void MainWindow::addWatermark() {
     m->mutate(tr("Add watermark"), [=](Project &p) { if (isNew) p.media.push_back(mi); p.clips.push_back(c); });
     if (isNew) requestAssets(mi);
     m->selectClip(id);
-    notify(tr("Watermark added to the top video track. Adjust size, position and opacity in Properties."));
+    notify(tr("Watermark added to the top video layer. Adjust size, position and opacity in Properties."));
 }
 
 void MainWindow::applyPip() {
     const Clip *c = m->project().clipById(m->selectedClip());
     if (!c) return;
     QString top;
-    for (auto &t : m->project().tracks) if (t.type == TrackType::Video) { top = t.id; break; }
+    for (auto &t : m->project().tracks) if (t.type == TrackType::Video) top = t.id;                // top layer = last video track
     const QString id = c->id;
     const double dur = c->duration();
     m->mutate(tr("Picture-in-picture"), [=](Project &p) {
@@ -879,17 +940,23 @@ void MainWindow::addTrack(TrackType t) {
     m->mutate(tr("Add track"), [t](Project &p) {
         int count = 1; for (auto &x : p.tracks) if (x.type == t) ++count;
         Track n; n.id = newId("t"); n.type = t; n.name = QString("%1 %2").arg(names[int(t)]).arg(count);
-        int idx = p.tracks.size();
+        int idx = p.tracks.size();                                         // audio-type tracks go to the bottom
         if (t == TrackType::Title) idx = 0;
-        else if (t == TrackType::Video) { idx = 0; for (int i = 0; i < p.tracks.size(); ++i) if (p.tracks[i].type == TrackType::Video) { idx = i; break; } }
-        p.tracks.insert(idx, n);
+        else if (t == TrackType::Video) { idx = 1; for (int i = 0; i < p.tracks.size(); ++i) if (p.tracks[i].type == TrackType::Video) idx = i + 1; }   // after the last video track = new top layer
+        p.tracks.insert(std::min<int>(idx, p.tracks.size()), n);
     });
+    notify(tr("Track added."));
 }
 
 void MainWindow::showTrackMenu(const QString &id, const QPoint &gp) {
     const Track *t = m->project().trackById(id);
     if (!t) return;
     QMenu menu(this);
+    const int tIdx = m->project().trackIndex(id);
+    auto *up = menu.addAction(tr("Move track up"), [this, id] { const int i = m->project().trackIndex(id); if (i > 0) m->mutate(tr("Move track"), [i](Project &p) { p.tracks.swapItemsAt(i, i - 1); }); });
+    auto *down = menu.addAction(tr("Move track down"), [this, id] { const int i = m->project().trackIndex(id); if (i >= 0 && i + 1 < m->project().tracks.size()) m->mutate(tr("Move track"), [i](Project &p) { p.tracks.swapItemsAt(i, i + 1); }); });
+    up->setEnabled(tIdx > 0); down->setEnabled(tIdx + 1 < m->project().tracks.size());
+    menu.addSeparator();
     menu.addAction(tr("Rename…"), [this, id] {
         const Track *tt = m->project().trackById(id); if (!tt) return;
         bool ok; const QString n = QInputDialog::getText(this, tr("Rename track"), tr("Name:"), QLineEdit::Normal, tt->name, &ok);
@@ -916,7 +983,7 @@ void MainWindow::showTrackMenu(const QString &id, const QPoint &gp) {
 }
 
 void MainWindow::showClipMenu(const QString &id, const QPoint &gp) {
-    m->selectClip(id);
+    if (!m->isSelected(id)) m->selectClip(id);
     QMenu menu(this);
     for (auto *k : {"split", "dup", "copy", "cut", "delete", "ripple"}) menu.addAction(a[k]);
     menu.addSeparator();
@@ -948,6 +1015,7 @@ bool MainWindow::runJob(const Project &p, const ExportOptions &o, JobKind kind, 
         m_bar->setFormat(QString("%1 %p%").arg(m_jobLabel));
         m_stateLabel->setText(text);
         m_etaLabel->setText(eta >= 0 ? tr("%1 remaining").arg(humanTime(eta)) : QString());
+        if (m_kind == JobKind::Preview) m_prev->showBusy(tr("Rendering preview… %1%").arg(int(f * 100)));
         if (m_kind == JobKind::Export) m_exp->setProgress(f, text + (eta >= 0 ? "  –  " + tr("%1 remaining").arg(humanTime(eta)) : QString()));
     });
     connect(m_job.get(), &ExportJob::logLine, this, [this](const QString &l) { m_log->appendPlainText(l.left(600)); });
@@ -974,8 +1042,12 @@ void MainWindow::onJobFinished(bool ok, const QString &msg, const QString &path)
     m_job.reset();
     notify(msg, !ok);
     if (kind == JobKind::Preview) {
-        if (ok) { m_previewFile = path; m_prev->playRendered(path); }
-        else if (!msg.contains("cancel")) QMessageBox::warning(this, tr("Preview"), msg);
+        m_prev->showBusy({});
+        if (ok) {
+            m_previewFile = path; m_previewHash = m_pendingHash;
+            if (projectHash() != m_pendingHash) notify(tr("The edit changed while the preview was rendering – press Play to refresh it."));
+            else if (m_autoPlay) m_prev->playRendered(path, m_playStart, true);
+        } else if (!msg.contains("cancel")) QMessageBox::warning(this, tr("Preview"), msg);
         return;
     }
     if (kind == JobKind::Proxy) { if (ok) { m->setProxy(m_jobProxyId, path); notify(tr("Optimized preview is ready.")); } return; }
@@ -1004,17 +1076,36 @@ void MainWindow::startExport() {
     runJob(m->project(), o, JobKind::Export, tr("Export"));
 }
 
-void MainWindow::renderPreview() {
+QByteArray MainWindow::projectHash() const {
+    return QCryptographicHash::hash(QJsonDocument(m->project().toJson()).toJson(QJsonDocument::Compact), QCryptographicHash::Sha1);
+}
+
+void MainWindow::playTimeline() {
+    if (m->project().clips.isEmpty()) { notify(tr("The timeline is empty. Add clips first.")); return; }
+    if (!m_previewFile.isEmpty() && QFileInfo::exists(m_previewFile) && m_previewHash == projectHash()) {
+        double st = m->playhead();
+        if (st >= m->project().duration() - 0.05) st = 0;
+        m_prev->playRendered(m_previewFile, st, true);
+        return;
+    }
+    renderPreview(true);                     // the edit changed since the last preview: refresh it, then play
+}
+
+void MainWindow::renderPreview(bool autoPlay) {
     if (m->project().clips.isEmpty()) { notify(tr("The timeline is empty. Add some clips first.")); return; }
+    if (busy()) { notify(tr("Another render is running. Please wait for it to finish.")); return; }
     m_prev->releaseMedia();
     if (!m_previewFile.isEmpty()) QFile::remove(m_previewFile);
+    m_previewFile.clear(); m_previewHash.clear();
+    m_autoPlay = autoPlay; m_playStart = m->playhead(); m_pendingHash = projectHash();
     const Project &p = m->project();
     ExportOptions o; o.format = "mp4-h264"; o.preview = true; o.quality = "draft"; o.audioBitrateKbps = 96;
     o.height = 480; o.width = int(std::lround(480.0 * p.settings.width / std::max(1, p.settings.height))) & ~1;
     o.fps = std::min(30.0, p.settings.fps > 0 ? p.settings.fps : 30.0);
     QDir().mkpath(AppSettings::dataDir() + "/preview");
     o.outputPath = AppSettings::dataDir() + "/preview/preview_" + QString::number(QDateTime::currentSecsSinceEpoch()) + ".mp4";
-    runJob(p, o, JobKind::Preview, tr("Preview"));
+    m_prev->showBusy(tr("Preparing preview…"));
+    if (!runJob(p, o, JobKind::Preview, tr("Preview"))) m_prev->showBusy({});
 }
 
 void MainWindow::extractAudio() {

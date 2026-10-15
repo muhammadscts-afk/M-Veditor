@@ -8,6 +8,9 @@
 #include "MediaProbe.h"
 #include "Theme.h"
 #include <QApplication>
+#include <QGuiApplication>
+#include <QScreen>
+#include <algorithm>
 #include <QCommandLineParser>
 #include <QDir>
 #include <QEventLoop>
@@ -81,8 +84,12 @@ int main(int argc, char **argv) {
 
     Theme::apply(AppSettings::darkTheme());
     MainWindow w;
-    w.resize(1500, 920);
-    w.show();
+    if (w.startMaximized()) w.showMaximized();
+    else {
+        const QRect av = QGuiApplication::primaryScreen()->availableGeometry();
+        w.resize(std::min(1500, av.width() - 20), std::min(920, av.height() - 20));
+        w.show();
+    }
     QString why;
     if (!tools::available(&why))
         QTimer::singleShot(300, &w, [&w, why] { QMessageBox::critical(&w, QObject::tr("Components missing"), why); });

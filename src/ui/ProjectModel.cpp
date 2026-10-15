@@ -40,7 +40,7 @@ void ProjectModel::mutate(const QString &text, const std::function<void(Project 
     fn(m_project);
     const QJsonObject after = m_project.toJson(m_path);
     if (before == after) return;
-    if (!m_selClip.isEmpty() && !m_project.clipById(m_selClip)) { m_selClip.clear(); emit selectionChanged(); }
+    pruneSelection();
     m_undo.push(new SnapshotCommand(this, text, before, after, key));
     setDirty(true);
     emit changed();
@@ -51,20 +51,43 @@ void ProjectModel::restoreFrom(const QJsonObject &snap) {
     Project p = Project::fromJson(snap, m_path, &err);
     if (!err.isEmpty()) return;
     m_project = p;
-    if (!m_selClip.isEmpty() && !m_project.clipById(m_selClip)) { m_selClip.clear(); emit selectionChanged(); }
+    pruneSelection();
     setDirty(true);
     emit changed();
 }
 
 void ProjectModel::reset(const Project &p, const QString &path) {
-    m_project = p; m_path = path; m_undo.clear(); m_selClip.clear(); m_selMedia.clear(); m_playhead = 0;
+    m_project = p; m_path = path; m_undo.clear(); m_selClip.clear(); m_sel.clear(); m_selMedia.clear(); m_playhead = 0;
     m_thumbs.clear(); m_proxies.clear(); m_waves.clear();
     m_project.ensureDefaultTracks();
     setDirty(false);
     emit titleChanged(); emit selectionChanged(); emit changed(); emit playheadChanged(0, false); emit assetsChanged();
 }
 
-void ProjectModel::selectClip(const QString &id) { if (m_selClip != id) { m_selClip = id; emit selectionChanged(); } }
+void ProjectModel::pruneSelection() {
+    const QStringList before = m_sel;
+    QStringList keep;
+    for (const QString &id : m_sel) if (m_project.clipById(id)) keep << id;
+    m_sel = keep;
+    if (!m_sel.contains(m_selClip)) m_selClip = m_sel.isEmpty() ? QString() : m_sel.last();
+    if (before != m_sel) emit selectionChanged();
+}
+void ProjectModel::selectClip(const QString &id) {
+    const QStringList n = id.isEmpty() ? QStringList() : QStringList{id};
+    if (m_sel != n || m_selClip != id) { m_sel = n; m_selClip = id; emit selectionChanged(); }
+}
+void ProjectModel::toggleClip(const QString &id) {
+    if (m_sel.contains(id)) { m_sel.removeAll(id); if (m_selClip == id) m_selClip = m_sel.isEmpty() ? QString() : m_sel.last(); }
+    else { m_sel << id; m_selClip = id; }
+    emit selectionChanged();
+}
+void ProjectModel::addToSelection(const QString &id) { if (!m_sel.contains(id)) m_sel << id; m_selClip = id; emit selectionChanged(); }
+void ProjectModel::setSelection(const QStringList &ids) {
+    if (m_sel == ids) return;
+    m_sel = ids; if (!m_sel.contains(m_selClip)) m_selClip = m_sel.isEmpty() ? QString() : m_sel.last();
+    emit selectionChanged();
+}
+void ProjectModel::makePrimary(const QString &id) { if (m_sel.contains(id) && m_selClip != id) { m_selClip = id; emit selectionChanged(); } }
 void ProjectModel::selectMedia(const QString &id) { if (m_selMedia != id) { m_selMedia = id; emit mediaSelectionChanged(); } }
 void ProjectModel::setPlayhead(double t, bool fromPlayback) {
     t = std::max(0.0, t);

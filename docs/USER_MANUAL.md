@@ -8,7 +8,7 @@ M Veditor is a video and MP3 editor for Windows 10/11. It works fully offline. Y
 |---|---|
 | **Media library** (left) | Your imported video, audio and images. Drag items onto the timeline, double-click to preview. |
 | **Preview monitor** (top) | Play, pause, stop, seek, step one frame back/forward. Buttons **Source** / **Timeline** switch what you watch. |
-| **Timeline** (bottom) | Tracks: Titles, Video 2, Video 1, Audio 1, Music, Voice-over. Clips live here. |
+| **Timeline** (bottom) | Tracks: Titles, Video 1, Video 2, Audio 1, Music, Voice-over. Clips live here. The **＋ Add track ▾** button above the track names adds more. |
 | **Properties** (right) | Settings of the selected clip: timing, speed, picture, audio, transition, title text. |
 | **Export** (right, second tab) | Format, resolution, frame rate, quality, bitrate, audio settings, output folder. |
 | **Status bar** | Messages, export progress, estimated time left and errors. **View ▸ Activity log** shows technical details. |
@@ -25,7 +25,8 @@ Panels can be resized, moved and closed (**View** menu). **View ▸ Dark / Light
 
 ## 3. Editing video
 
-* **Select** a clip by clicking it. **Move** it by dragging (it snaps to other clips, markers and the playhead; switch snapping in **Edit ▸ Snapping**). Clips on one track never overlap – a clip dropped on another is moved to the nearest free place.
+* **Select** a clip by clicking it. **Select several**: Ctrl+click (or Shift+click) adds/removes clips, drag a box on an empty part of a track to select everything it touches, or press Ctrl+A for all. Moving, deleting, duplicating, copying, splitting, speed, transitions and every value in Properties then apply to **all selected clips** (the one with the yellow outline is the main one shown in Properties).
+* **Move** a clip by dragging (it snaps to other clips, markers and the playhead; switch snapping in **Edit ▸ Snapping**). Clips on one track never overlap – a clip dropped on another is moved to the nearest free place.
 * **Trim**: drag the left or right edge of a clip.
 * **Split**: put the playhead on the clip and press **S** (splits the selected clip, or every clip under the playhead if nothing is selected).
 * **Delete** removes the clip. **Shift+Delete** (ripple delete) also closes the gap.
@@ -43,10 +44,15 @@ Panels can be resized, moved and closed (**View** menu). **View ▸ Dark / Light
 * **Picture-in-picture** – select a clip and use **Video ▸ Make picture-in-picture**; it is shrunk into a corner of the top video track and shown over the footage below.
 
 ### Tracks
-Click **M** (mute), **S** (solo), **L** (lock), **H** (hide) in a track header. Right-click a header to rename, set track volume, change its height, or delete it. **Video ▸ Add track** adds more tracks. Drag the lower edge of a header to resize the track.
+* **Add** tracks with the **＋ Add track ▾** button above the track names (video, audio, music, voice-over, titles). New video tracks are numbered in ascending order downwards (Video 1, Video 2, Video 3 …).
+* **Reorder** tracks by dragging a track header up or down (a yellow line shows where it will land), or right-click ▸ **Move track up / down**.
+* **Layering:** video tracks *lower in the list are drawn on top of* those above them – so Video 2 covers Video 1. Title tracks are always drawn on top of all video. Use this for overlays, picture-in-picture and watermarks.
+* **Clips can move between tracks** by dragging up or down: video clips between video tracks (or onto an audio track to use only their sound), audio clips between audio/music/voice-over tracks, titles between title tracks.
+* **M (Mute)** silences the track. **S (Solo)** means *"listen to this track only"*: while any track is soloed every other track is silent (preview and export). On a video or title track Solo also shows only the soloed picture tracks. Click S again to turn it off – the track header says "silent (solo)" for tracks that are being skipped. **L (Lock)** protects a track's clips. **H (Hide)** hides a track's picture (sound is unaffected).
+* Hover any button for a tip. Right-click a header to rename, set track volume, change height, move or delete. Drag the lower edge of a header to resize the track.
 
-### Markers
-Press **M** to drop a marker at the playhead. Right-click the ruler to add, rename or delete markers.
+### Markers and colour regions
+Press **M** to drop a marker at the playhead. Right-click the ruler to add, rename or delete markers, or to **change the colour** of the region after a marker. The areas between marker lines are tinted with different, very transparent colours across all tracks, so you can see sections of your edit at a glance. Turn this off in **View ▸ Colour regions between markers**.
 
 ## 4. Speed controller (slow motion and fast motion)
 
@@ -78,8 +84,9 @@ Original audio files are never overwritten. Exports never replace an existing fi
 
 ## 6. Previewing your edit
 
-* **Timeline mode (live)**: while you play or scrub, the monitor shows the top video clip at the playhead with its speed, plus titles. Fast and responsive, but it does **not** show effects (colour, rotation, transitions, overlays) or mix several audio tracks.
-* **Render preview** (F5 or the button below the monitor): renders the *whole* timeline – all tracks, effects, transitions, titles and the audio mix – at low resolution and plays it. This is the faithful way to check your edit before the final export.
+* **Play (Space)** on the timeline renders a low-resolution preview of the **whole** edit – all tracks, effects, transitions, titles and the audio mix – and then plays it smoothly like a normal video. The first Play after an edit shows "Rendering preview…" with a percentage; after that, Play starts instantly until you change something. If you edit while a preview is playing, it stops and the next Play refreshes it. **Render preview** (F5) forces a fresh render.
+* **Click or drag anywhere on the blue seek bar** under the picture to jump to that point. Scrubbing the timeline ruler shows the picture at the playhead without rendering.
+* **Live** button (off by default): instant but approximate playback of the top video clip only – no effects, no multi-track mix, and it may stutter at clip boundaries. Use it for quick checks.
 * **Source mode**: double-click a library item. Use **Mark In / Mark Out** to choose a part, then **Add to timeline**.
 * For very large (4K) files, right-click the item ▸ **Create optimized preview (proxy)**. Previews then use the lighter file; exports always use the original.
 
@@ -116,7 +123,7 @@ While exporting you see a progress bar and the estimated time remaining; **Cance
 | Space | Play / pause | Ctrl+N / O / S | New / Open / Save |
 | Left / Right | Previous / next frame | Ctrl+Shift+S | Save as |
 | Home / End | Go to start / end | Ctrl+I | Import media |
-| Up / Down | Previous / next clip edge | Ctrl+Z / Ctrl+Y | Undo / Redo |
+| Up / Down | Previous / next clip edge | Ctrl+Z / Ctrl+Y | Undo / Redo | Ctrl+A | Select all clips |
 | S | Split at playhead | Ctrl+C / X / V | Copy / Cut / Paste clip |
 | Delete / Shift+Delete | Delete / ripple delete | Ctrl+D | Duplicate |
 | M | Add marker | T | Add title |
@@ -140,7 +147,7 @@ While exporting you see a progress bar and the estimated time remaining; **Cance
 
 ## 11. Known limits
 
-* Live timeline preview shows the top video clip only (no effects, no multi-track audio mix). Use **Render preview** to see the full result.
+* Playing a never-rendered or edited timeline first renders the preview (time depends on the length of the project). The **Live** mode is instant but only approximate.
 * **Reverse** is limited to clips of 3 minutes (the clip is held in memory).
 * Transitions blend a clip into the footage that is already there. For "cross-dissolve between two clips" the first clip's last frame is held during the transition.
 * Subtitles are typed in as caption clips; importing .srt files is not included in this version.

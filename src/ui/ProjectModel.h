@@ -27,8 +27,14 @@ public:
     void restoreFrom(const QJsonObject &snapshot);   // used by undo/redo
 
     // selection / playhead
-    QString selectedClip() const { return m_selClip; }
-    void selectClip(const QString &id);
+    QString selectedClip() const { return m_selClip; }          // primary (last clicked) clip
+    QStringList selectedClips() const { return m_sel; }
+    bool isSelected(const QString &id) const { return m_sel.contains(id); }
+    void selectClip(const QString &id);                           // only this clip (empty = none)
+    void toggleClip(const QString &id);
+    void addToSelection(const QString &id);
+    void setSelection(const QStringList &ids);
+    void makePrimary(const QString &id);
     QString selectedMedia() const { return m_selMedia; }
     void selectMedia(const QString &id);
     double playhead() const { return m_playhead; }
@@ -56,6 +62,8 @@ private:
     Project m_project;
     QUndoStack m_undo;
     QString m_path, m_selClip, m_selMedia;
+    QStringList m_sel;
+    void pruneSelection();
     bool m_dirty = false;
     double m_playhead = 0;
     QHash<QString, QString> m_thumbs, m_proxies;

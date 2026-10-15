@@ -95,6 +95,7 @@ struct Track {
 struct Marker {
     double time = 0;
     QString name;
+    QString color;                      // optional "#rrggbb" tint of the region that starts at this marker
 };
 
 struct ProjectSettings {
@@ -122,6 +123,10 @@ public:
     int trackIndex(const QString &id) const;
     QVector<const Clip *> clipsOnTrack(const QString &trackId) const; // sorted by start
     double duration() const;
+    // Solo rules: sound: if any track is soloed only soloed tracks are heard.
+    // picture: if any video/title track is soloed only soloed video/title tracks are shown.
+    bool trackAudible(const Track &t) const;
+    bool trackVisible(const Track &t) const;
     int usageCount(const QString &mediaId) const;
 
     void ensureDefaultTracks();

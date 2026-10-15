@@ -29,3 +29,12 @@ program for you. You only click; nothing to install.
 
 If step 6 ends with a red X, open the run, click the failed step, copy the
 red error text and send it to me - I will fix the code.
+
+
+UPDATING TO A NEWER VERSION (after I send a new zip)
+----------------------------------------------------
+1. Unzip the new zip. In your GitHub repository click "Add file" > "Upload files".
+2. Select everything inside the unzipped folder (Ctrl+A) and drag it in.
+   Files with the same names are replaced. Click "Commit changes".
+3. Actions > "Build Windows app" > "Run workflow" and download the new
+   "M-Veditor-windows" artifact when it turns green.

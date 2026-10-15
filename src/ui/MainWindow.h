@@ -30,6 +30,7 @@ public:
     TimelineView *timeline() { return m_tl; }
     void startExportWith(const ExportOptions &o);
     bool busy() const { return m_job && m_job->isRunning(); }
+    bool startMaximized() const { return m_startMax; }
 
 protected:
     void closeEvent(QCloseEvent *) override;
@@ -84,7 +85,10 @@ private:
     void showTrackMenu(const QString &id, const QPoint &gp);
     // jobs
     void startExport();
-    void renderPreview();
+    void renderPreview(bool autoPlay = false);
+    void playTimeline();
+    QByteArray projectHash() const;
+    void tidyTrack(Project &p, const QString &trackId);
     void extractAudio();
     void createProxy(const QString &mediaId);
     bool runJob(const Project &p, const ExportOptions &o, JobKind kind, const QString &label);
@@ -115,6 +119,9 @@ private:
     std::unique_ptr<QLockFile> m_lock;
     bool m_primaryInstance = true;
     QString m_previewFile;
+    QByteArray m_previewHash, m_pendingHash;
+    bool m_autoPlay = false, m_startMax = false;
+    double m_playStart = 0;
     static constexpr double kImageSeconds = 5.0;
 };
 

@@ -158,6 +158,17 @@ double Project::duration() const {
     for (auto &c : clips) d = std::max(d, c.end());
     return d;
 }
+bool Project::trackAudible(const Track &t) const {
+    bool anySolo = false;
+    for (auto &x : tracks) if (x.solo) anySolo = true;
+    return !t.muted && (!anySolo || t.solo);
+}
+bool Project::trackVisible(const Track &t) const {
+    if (t.hidden) return false;
+    bool videoSolo = false;
+    for (auto &x : tracks) if (x.solo && (x.type == TrackType::Video || x.type == TrackType::Title)) videoSolo = true;
+    return !videoSolo || t.solo;
+}
 int Project::usageCount(const QString &mediaId) const {
     int n = 0;
     for (auto &c : clips) if (c.mediaId == mediaId) ++n;
@@ -171,8 +182,8 @@ void Project::ensureDefaultTracks() {
     if (!tracks.isEmpty()) return;
     auto add = [&](const QString &n, TrackType t) { Track tr; tr.id = newId("t"); tr.name = n; tr.type = t; tracks.push_back(tr); };
     add("Titles", TrackType::Title);
+    add("Video 1", TrackType::Video);   // video tracks lower in the list are drawn on top of those above
     add("Video 2", TrackType::Video);
-    add("Video 1", TrackType::Video);
     add("Audio 1", TrackType::Audio);
     add("Music", TrackType::Music);
     add("Voice-over", TrackType::Voice);
@@ -212,7 +223,7 @@ QJsonObject Project::toJson(const QString &projectFilePath) const {
     QJsonArray c; for (auto &x : clips) c.push_back(x.toJson());
     o["clips"] = c;
     QJsonArray mk;
-    for (auto &x : markers) { QJsonObject j; j["time"] = x.time; j["name"] = x.name; mk.push_back(j); }
+    for (auto &x : markers) { QJsonObject j; j["time"] = x.time; j["name"] = x.name; if (!x.color.isEmpty()) j["color"] = x.color; mk.push_back(j); }
     o["markers"] = mk;
     return o;
 }
@@ -238,7 +249,7 @@ Project Project::fromJson(const QJsonObject &o, const QString &projectFilePath, 
     }
     for (auto v : o["tracks"].toArray()) p.tracks.push_back(Track::fromJson(v.toObject()));
     for (auto v : o["clips"].toArray()) p.clips.push_back(Clip::fromJson(v.toObject()));
-    for (auto v : o["markers"].toArray()) { Marker m; m.time = v.toObject()["time"].toDouble(); m.name = v.toObject()["name"].toString(); p.markers.push_back(m); }
+    for (auto v : o["markers"].toArray()) { Marker m; m.time = v.toObject()["time"].toDouble(); m.name = v.toObject()["name"].toString(); m.color = v.toObject()["color"].toString(); p.markers.push_back(m); }
     p.ensureDefaultTracks();
     return p;
 }

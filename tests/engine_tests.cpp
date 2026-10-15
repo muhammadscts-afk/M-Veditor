@@ -95,7 +95,7 @@ static Clip clip(Project &p, const MediaItem &m, const QString &track, double st
 static QString trackV1 = "V1", trackV2 = "V2", trackA = "A1", trackM = "M1", trackVO = "VO", trackT = "T1";
 static Project newProject(const MediaItem &v) {
     Project p; p.ensureDefaultTracks(); p.media.push_back(v);
-    const char *ids[] = {"T1", "V2", "V1", "A1", "M1", "VO"};
+    const char *ids[] = {"T1", "V1", "V2", "A1", "M1", "VO"};
     for (int i = 0; i < 6; ++i) p.tracks[i].id = ids[i];
     p.settings.width = 640; p.settings.height = 360; p.settings.fps = 25;
     return p;
@@ -234,6 +234,26 @@ int main(int argc, char **argv) {
         clip(p, img, trackV1, 0, 0, 2); clip(p, img, trackV1, 2, 0, 1.5);
         auto r = render(p, opts("mp4-h264", "slides.mp4"));
         CHECK(r.ok && near(r.out.item.duration, 3.5, 0.25), QString("image slideshow %1").arg(r.msg));
+    }
+
+    // ----------------------------------------------------------------------------- layering / solo / hide
+    section("track layering, solo and hide (picture)");
+    {
+        MediaItem dark = media(P("dark.mp4")), light = media(P("light.mp4"));
+        auto mk = [&]() { Project p = newProject(light); p.media.push_back(dark); clip(p, light, trackV1, 0, 0, 2); clip(p, dark, trackV2, 0, 0, 2); return p; };
+        Project a = mk();   // Video 2 is lower in the list than Video 1 => drawn on top => dark wins
+        auto ra = render(a, opts("mp4-h264", "layer_top.mp4"));
+        CHECK(ra.ok && near(lumaAt(P("layer_top.mp4"), 1.0), 57, 10), QString("later video track is on top (luma %1, expect ~57)").arg(lumaAt(P("layer_top.mp4"), 1.0)));
+        Project b = mk(); b.trackById(trackV2)->hidden = true;
+        auto rb = render(b, opts("mp4-h264", "layer_hidden.mp4"));
+        CHECK(rb.ok && near(lumaAt(P("layer_hidden.mp4"), 1.0), 195, 10), QString("hidden top track reveals the one below (luma %1)").arg(lumaAt(P("layer_hidden.mp4"), 1.0)));
+        Project c = mk(); c.trackById(trackV1)->solo = true;
+        auto rc = render(c, opts("mp4-h264", "layer_solo.mp4"));
+        CHECK(rc.ok && near(lumaAt(P("layer_solo.mp4"), 1.0), 195, 10), QString("soloing Video 1 shows only Video 1 (luma %1)").arg(lumaAt(P("layer_solo.mp4"), 1.0)));
+        CHECK(Project().trackVisible(Track()) && Project().trackAudible(Track()), QString("default track is visible and audible"));
+        Project d = mk(); d.trackById(trackA)->solo = true;      // soloing an AUDIO track must not blank the picture
+        auto rd = render(d, opts("mp4-h264", "solo_audio_picture.mp4"));
+        CHECK(rd.ok && near(lumaAt(P("solo_audio_picture.mp4"), 1.0), 57, 10), QString("soloing an audio track keeps the picture"));
     }
 
     // ----------------------------------------------------------------------------- titles

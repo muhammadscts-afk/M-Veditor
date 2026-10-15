@@ -5,9 +5,9 @@
 #include <QGraphicsSimpleTextItem>
 #include <QHBoxLayout>
 #include <QPushButton>
-#include <QStyle>
 #include <QUrl>
 #include <QVBoxLayout>
+#include <algorithm>
 #include <cmath>
 
 namespace mv {
@@ -18,19 +18,25 @@ PreviewMonitor::PreviewMonitor(ProjectModel *model, QWidget *parent) : QWidget(p
     m_view->setBackgroundBrush(QColor(10, 10, 12));
     m_view->setFrameShape(QFrame::NoFrame);
     m_view->setRenderHint(QPainter::SmoothPixmapTransform);
-    m_view->setMinimumSize(320, 180);
+    m_view->setMinimumSize(240, 135);
     m_view->setAccessibleName(tr("Preview monitor"));
     m_canvas = m_scene->addRect(0, 0, 1920, 1080, QPen(Qt::NoPen), QBrush(Qt::black));
     m_video = new QGraphicsVideoItem; m_video->setAspectRatioMode(Qt::KeepAspectRatio); m_scene->addItem(m_video);
     m_image = m_scene->addPixmap(QPixmap()); m_image->setVisible(false);
+    m_busy = m_scene->addSimpleText(QString()); m_busy->setBrush(Qt::white); m_busy->setZValue(30); m_busy->setVisible(false);
     m_player = new QMediaPlayer(this);
     m_audio = new QAudioOutput(this);
     m_player->setAudioOutput(m_audio);
     m_player->setVideoOutput(m_video);
 
-    m_slider = new QSlider(Qt::Horizontal); m_slider->setRange(0, 10000);
-    m_slider->setToolTip(tr("Seek"));
-    m_time = new QLabel("00:00.000 / 00:00.000"); m_time->setMinimumWidth(170);
+    m_slider = new SeekSlider(Qt::Horizontal); m_slider->setRange(0, 10000);
+    m_slider->setToolTip(tr("Click or drag to jump to any point"));
+    m_slider->setFixedHeight(24);
+    m_slider->setStyleSheet(
+        "QSlider::groove:horizontal { height: 8px; background: #3a3d45; border-radius: 4px; }"
+        "QSlider::sub-page:horizontal { background: #2d7ff9; border-radius: 4px; }"
+        "QSlider::handle:horizontal { width: 20px; margin: -7px 0; border-radius: 10px; background: #ff4757; border: 2px solid #ffffff; }");
+    m_time = new QLabel("00:00.000 / 00:00.000");
     m_modeLabel = new QLabel; m_modeLabel->setStyleSheet("color:#8fb4ff; font-weight:bold;");
     auto mk = [&](QStyle::StandardPixmap ic, const QString &tip) { auto *b = new QToolButton; b->setIcon(style()->standardIcon(ic)); b->setToolTip(tip); b->setAutoRaise(true); b->setIconSize(QSize(22, 22)); return b; };
     m_play = mk(QStyle::SP_MediaPlay, tr("Play / Pause (Space)"));
@@ -38,21 +44,28 @@ PreviewMonitor::PreviewMonitor(ProjectModel *model, QWidget *parent) : QWidget(p
     auto *prev = mk(QStyle::SP_MediaSeekBackward, tr("Previous frame (Left)"));
     auto *next = mk(QStyle::SP_MediaSeekForward, tr("Next frame (Right)"));
     m_srcBtn = new QToolButton; m_srcBtn->setText(tr("Source")); m_srcBtn->setCheckable(true); m_srcBtn->setToolTip(tr("Preview the selected library item"));
-    m_tlBtn = new QToolButton; m_tlBtn->setText(tr("Timeline")); m_tlBtn->setCheckable(true); m_tlBtn->setChecked(true); m_tlBtn->setToolTip(tr("Preview the timeline at the playhead"));
-    auto *rend = new QPushButton(tr("Render preview")); rend->setToolTip(tr("Render the whole timeline (all tracks, effects, transitions, titles and mix) at low resolution and play it (F5)"));
-    auto *markIn = new QToolButton; markIn->setText(tr("Mark In")); markIn->setToolTip(tr("Set the start of the part of the source you want to use"));
-    auto *markOut = new QToolButton; markOut->setText(tr("Mark Out")); markOut->setToolTip(tr("Set the end of the part of the source you want to use"));
+    m_tlBtn = new QToolButton; m_tlBtn->setText(tr("Timeline")); m_tlBtn->setCheckable(true); m_tlBtn->setChecked(true); m_tlBtn->setToolTip(tr("Preview the timeline"));
+    m_live = new QToolButton; m_live->setText(tr("Live")); m_live->setCheckable(true);
+    m_live->setToolTip(tr("Off (recommended): Play renders a smooth preview of everything (all tracks, effects, mix).\nOn: instant but approximate playback of the top video clip only."));
+    auto *rend = new QPushButton(tr("Render preview")); rend->setToolTip(tr("Re-render the whole timeline at low resolution and play it (F5)"));
+    auto *markIn = new QToolButton; markIn->setText(tr("In")); markIn->setToolTip(tr("Mark In: start of the part of the source you want to use"));
+    auto *markOut = new QToolButton; markOut->setText(tr("Out")); markOut->setToolTip(tr("Mark Out: end of the part of the source you want to use"));
     auto *addB = new QToolButton; addB->setText(tr("Add to timeline")); addB->setToolTip(tr("Add the source (or the marked part) at the playhead"));
 
     auto *lay = new QVBoxLayout(this); lay->setContentsMargins(0, 0, 0, 0); lay->setSpacing(2);
     lay->addWidget(m_view, 1);
     lay->addWidget(m_slider);
-    auto *row = new QHBoxLayout; row->setContentsMargins(6, 0, 6, 4);
+    auto *row = new QHBoxLayout; row->setContentsMargins(6, 0, 6, 0);
     row->addWidget(prev); row->addWidget(m_play); row->addWidget(stopB); row->addWidget(next); row->addWidget(m_time);
-    row->addSpacing(8); row->addWidget(m_srcBtn); row->addWidget(m_tlBtn); row->addWidget(m_modeLabel);
-    row->addStretch(1);
-    row->addWidget(markIn); row->addWidget(markOut); row->addWidget(addB); row->addWidget(rend);
+    row->addStretch(1); row->addWidget(m_srcBtn); row->addWidget(m_tlBtn); row->addWidget(m_live);
     lay->addLayout(row);
+    auto *row2 = new QHBoxLayout; row2->setContentsMargins(6, 0, 6, 4);
+    row2->addWidget(m_modeLabel); row2->addStretch(1);
+    m_srcTools = new QWidget; auto *st = new QHBoxLayout(m_srcTools); st->setContentsMargins(0, 0, 0, 0);
+    st->addWidget(markIn); st->addWidget(markOut); st->addWidget(addB);
+    row2->addWidget(m_srcTools); row2->addWidget(rend);
+    lay->addLayout(row2);
+    setMinimumWidth(10);
 
     connect(m_play, &QToolButton::clicked, this, &PreviewMonitor::togglePlay);
     connect(stopB, &QToolButton::clicked, this, &PreviewMonitor::stop);
@@ -61,9 +74,9 @@ PreviewMonitor::PreviewMonitor(ProjectModel *model, QWidget *parent) : QWidget(p
     connect(rend, &QPushButton::clicked, this, &PreviewMonitor::renderPreviewRequested);
     connect(m_srcBtn, &QToolButton::clicked, this, [this] {
         const QString id = m->selectedMedia().isEmpty() ? m_sourceId : m->selectedMedia();
-        if (!id.isEmpty()) playSource(id); else { m_srcBtn->setChecked(false); emit message(tr("Select an item in the media library first.")); }
+        if (!id.isEmpty()) playSource(id); else { m_srcBtn->setChecked(m_mode == Mode::Source); emit message(tr("Select an item in the media library first.")); }
     });
-    connect(m_tlBtn, &QToolButton::clicked, this, [this] { pause(); setMode(Mode::Timeline); syncTo(m->playhead(), false); });
+    connect(m_tlBtn, &QToolButton::clicked, this, [this] { pause(); setMode(Mode::Timeline); setCanvas(m->project().settings.width, m->project().settings.height); m_loadedPath.clear(); syncTo(m->playhead(), false); });
     connect(markIn, &QToolButton::clicked, this, [this] { if (m_mode == Mode::Source) { m_markIn = m_player->position() / 1000.0; emit message(tr("In point set to %1").arg(humanTime(m_markIn, true))); } });
     connect(markOut, &QToolButton::clicked, this, [this] { if (m_mode == Mode::Source) { m_markOut = m_player->position() / 1000.0; emit message(tr("Out point set to %1").arg(humanTime(m_markOut, true))); } });
     connect(addB, &QToolButton::clicked, this, [this] {
@@ -74,38 +87,36 @@ PreviewMonitor::PreviewMonitor(ProjectModel *model, QWidget *parent) : QWidget(p
         if (b <= a) b = mi->duration;
         emit addToTimelineRequested(m_sourceId, a, b);
     });
-    connect(m_slider, &QSlider::sliderPressed, this, [this] { m_sliderDrag = true; });
-    connect(m_slider, &QSlider::sliderReleased, this, [this] { m_sliderDrag = false; });
-    connect(m_slider, &QSlider::valueChanged, this, [this](int v) {
-        if (!m_sliderDrag) return;
-        if (m_mode == Mode::Timeline) { m->setPlayhead(v / 10000.0 * std::max(1.0, m->project().duration())); }
-        else if (m_player->duration() > 0) m_player->setPosition(qint64(v / 10000.0 * m_player->duration()));
-    });
+    connect(m_slider, &SeekSlider::dragStateChanged, this, [this](bool d) { m_sliderDrag = d; });
+    connect(m_slider, &SeekSlider::seekRequested, this, &PreviewMonitor::onSeek);
     connect(m_player, &QMediaPlayer::positionChanged, this, [this](qint64 pos) {
+        m_lastReported = pos; m_lastClock.restart();
         if (m_mode == Mode::Timeline) return;
-        if (m_mode == Mode::Rendered) m->setPlayhead(pos / 1000.0, true);
-        if (!m_sliderDrag && m_player->duration() > 0) { QSignalBlocker b(m_slider); m_slider->setValue(int(10000.0 * pos / m_player->duration())); }
-        updateTimeLabel();
+        if (m_mode == Mode::Source) {
+            if (!m_sliderDrag && m_player->duration() > 0) { QSignalBlocker b(m_slider); m_slider->setValue(int(10000.0 * pos / m_player->duration())); }
+            updateTimeLabel();
+        }
     });
     connect(m_player, &QMediaPlayer::playbackStateChanged, this, [this](QMediaPlayer::PlaybackState s) {
         if (m_mode != Mode::Timeline) m_play->setIcon(style()->standardIcon(s == QMediaPlayer::PlayingState ? QStyle::SP_MediaPause : QStyle::SP_MediaPlay));
+        if (m_mode == Mode::Rendered && s == QMediaPlayer::PlayingState) { m_lastReported = m_player->position(); m_lastClock.restart(); m_smooth.start(); }
+        else m_smooth.stop();
     });
     connect(m_player, &QMediaPlayer::mediaStatusChanged, this, [this](QMediaPlayer::MediaStatus st) {
         if ((st == QMediaPlayer::LoadedMedia || st == QMediaPlayer::BufferedMedia || st == QMediaPlayer::BufferingMedia) && m_pending.valid) {
             m_pending.valid = false;
-            const Clip *c = activeVideoClip(m->playhead());
+            const Clip *c = m_mode == Mode::Timeline ? activeVideoClip(m->playhead()) : nullptr;
             applyToPlayer(m_pending.posMs, m_pending.play, c ? c->fx.speed : 1.0, c ? c->fx.volume : 1.0);
         }
         if (st == QMediaPlayer::InvalidMedia) emit message(tr("This file can't be previewed (unsupported or damaged). Exporting may still work."));
     });
     connect(m_video, &QGraphicsVideoItem::nativeSizeChanged, this, [this] { fit(); });
+    m_timer.setTimerType(Qt::PreciseTimer); m_timer.setInterval(16);
+    m_smooth.setTimerType(Qt::PreciseTimer); m_smooth.setInterval(16);
     connect(&m_timer, &QTimer::timeout, this, &PreviewMonitor::tick);
-    m_timer.setInterval(33);
+    connect(&m_smooth, &QTimer::timeout, this, &PreviewMonitor::smoothTick);
     connect(m, &ProjectModel::playheadChanged, this, &PreviewMonitor::onPlayheadChanged);
-    connect(m, &ProjectModel::changed, this, [this] {
-        if (m_mode == Mode::Timeline && !m_tlPlaying) syncTo(m->playhead(), false);
-        updateTimeLabel();
-    });
+    connect(m, &ProjectModel::changed, this, &PreviewMonitor::onProjectChanged);
     setMode(Mode::Timeline);
     setCanvas(m->project().settings.width, m->project().settings.height);
 }
@@ -121,20 +132,27 @@ void PreviewMonitor::setCanvas(int w, int h) {
 }
 void PreviewMonitor::fit() { m_view->fitInView(m_scene->sceneRect(), Qt::KeepAspectRatio); }
 
-void PreviewMonitor::setMode(Mode md) {
-    m_mode = md;
-    m_srcBtn->setChecked(md == Mode::Source || md == Mode::Rendered);
-    m_tlBtn->setChecked(md == Mode::Timeline);
-    m_modeLabel->setText(md == Mode::Source ? tr("SOURCE") : md == Mode::Rendered ? tr("RENDERED PREVIEW") : tr("TIMELINE (live)"));
-    if (md != Mode::Timeline) {
-        for (auto *i : m_titleItems) { m_scene->removeItem(i); delete i; }
-        m_titleItems.clear();
-    }
+void PreviewMonitor::showBusy(const QString &text) {
+    if (text.isEmpty()) { m_busy->setVisible(false); return; }
+    QFont f; f.setBold(true); f.setPixelSize(std::max(14, m_ch / 16));
+    m_busy->setFont(f); m_busy->setText(text);
+    const QRectF br = m_busy->boundingRect();
+    m_busy->setPos((m_cw - br.width()) / 2, (m_ch - br.height()) / 2);
+    m_busy->setVisible(true);
 }
 
-void PreviewMonitor::releaseMedia() {
-    pause(); m_player->setSource(QUrl()); m_loadedPath.clear(); m_pending.valid = false; m_sourceId.clear();
+void PreviewMonitor::setMode(Mode md) {
+    m_mode = md;
+    m_srcBtn->setChecked(md == Mode::Source);
+    m_tlBtn->setChecked(md != Mode::Source);
+    m_srcTools->setVisible(md == Mode::Source);
+    m_live->setEnabled(md != Mode::Source);
+    m_modeLabel->setText(md == Mode::Source ? tr("SOURCE") : md == Mode::Rendered ? tr("TIMELINE – rendered preview") : (m_live->isChecked() ? tr("TIMELINE – live (approximate)") : tr("TIMELINE")));
+    if (md != Mode::Timeline) { for (auto *i : m_titleItems) { m_scene->removeItem(i); delete i; } m_titleItems.clear(); }
+    if (md != Mode::Rendered) m_smooth.stop();
 }
+
+void PreviewMonitor::releaseMedia() { pause(); m_player->setSource(QUrl()); m_loadedPath.clear(); m_pending.valid = false; m_sourceId.clear(); showBusy({}); }
 
 void PreviewMonitor::playSource(const QString &mediaId) {
     const MediaItem *mi = m->project().mediaById(mediaId);
@@ -142,6 +160,7 @@ void PreviewMonitor::playSource(const QString &mediaId) {
     pause();
     if (mi->missing) { emit message(tr("This file is missing. Use File > Relink Missing Media.")); return; }
     setMode(Mode::Source);
+    showBusy({});
     m_sourceId = mediaId; m_markIn = m_markOut = -1; m_srcFps = mi->fps > 0 ? mi->fps : 30;
     setCanvas(mi->width ? mi->width : 1280, mi->height ? mi->height : 720);
     m_image->setVisible(false);
@@ -160,15 +179,17 @@ void PreviewMonitor::playSource(const QString &mediaId) {
     m_pending = {true, 0, true};
 }
 
-void PreviewMonitor::playRendered(const QString &path) {
+void PreviewMonitor::playRendered(const QString &path, double startSeconds, bool autoplay) {
     pause();
     setMode(Mode::Rendered);
+    showBusy({});
+    m_srcFps = m->project().settings.fps > 0 ? m->project().settings.fps : 30;
     setCanvas(m->project().settings.width, m->project().settings.height);
     m_image->setVisible(false); m_video->setVisible(true);
-    m_renderedPath = path; m_loadedPath = path;
+    m_loadedPath = path;
     m_player->setPlaybackRate(1.0); m_audio->setVolume(1.0);
     m_player->setSource(QUrl::fromLocalFile(path));
-    m_pending = {true, qint64(m->playhead() * 1000), true};
+    m_pending = {true, qint64(std::max(0.0, startSeconds) * 1000), autoplay};
 }
 
 bool PreviewMonitor::isPlaying() const { return m_tlPlaying || m_player->playbackState() == QMediaPlayer::PlayingState; }
@@ -178,6 +199,7 @@ void PreviewMonitor::togglePlay() {
     if (m_mode == Mode::Timeline) {
         const double dur = m->project().duration();
         if (dur <= 0) { emit message(tr("The timeline is empty. Add clips first.")); return; }
+        if (!m_live->isChecked()) { emit timelinePlayRequested(); return; }
         if (m->playhead() >= dur - 0.05) m->setPlayhead(0);
         m_t0 = m->playhead(); m_clock.start(); m_tlPlaying = true; m_timer.start();
         m_play->setIcon(style()->standardIcon(QStyle::SP_MediaPause));
@@ -189,27 +211,40 @@ void PreviewMonitor::togglePlay() {
 }
 void PreviewMonitor::pause() {
     if (m_tlPlaying) { m_tlPlaying = false; m_timer.stop(); }
+    m_smooth.stop();
     m_player->pause();
     m_play->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
 }
 void PreviewMonitor::stop() {
     pause();
     if (m_mode == Mode::Timeline) m->setPlayhead(0);
-    else m_player->setPosition(0);
+    else { m_player->setPosition(0); if (m_mode == Mode::Rendered) m->setPlayhead(0, true); }
 }
 void PreviewMonitor::stepFrame(int dir) {
     pause();
-    if (m_mode == Mode::Timeline) {
-        m->setPlayhead(std::max(0.0, m->playhead() + dir / std::max(1.0, m->project().settings.fps)));
-    } else {
+    if (m_mode == Mode::Timeline) m->setPlayhead(std::max(0.0, m->playhead() + dir / std::max(1.0, m->project().settings.fps)));
+    else {
         m_player->setPosition(std::max<qint64>(0, m_player->position() + qint64(dir * 1000.0 / m_srcFps)));
+        if (m_mode == Mode::Rendered) m->setPlayhead(m_player->position() / 1000.0, true);
+    }
+}
+
+void PreviewMonitor::onSeek(double f) {
+    if (m_mode == Mode::Timeline) {
+        const double dur = std::max(0.0, m->project().duration());
+        m->setPlayhead(f * dur);
+    } else if (m_player->duration() > 0) {
+        m_player->setPosition(qint64(f * m_player->duration()));
+        if (m_mode == Mode::Rendered) m->setPlayhead(f * m_player->duration() / 1000.0, true);
+        updateTimeLabel();
     }
 }
 
 const Clip *PreviewMonitor::activeVideoClip(double t) const {
     const Project &p = m->project();
-    for (const Track &tr : p.tracks) {
-        if (tr.type != TrackType::Video || tr.hidden) continue;
+    for (int i = p.tracks.size() - 1; i >= 0; --i) {        // later video tracks are drawn on top
+        const Track &tr = p.tracks[i];
+        if (tr.type != TrackType::Video || !p.trackVisible(tr)) continue;
         for (const Clip &c : p.clips) {
             if (c.trackId != tr.id || c.isTitle()) continue;
             const MediaItem *mi = p.mediaById(c.mediaId);
@@ -267,7 +302,7 @@ void PreviewMonitor::updateTitles(double t) {
     if (m_mode != Mode::Timeline) return;
     const Project &p = m->project();
     for (const Track &tr : p.tracks) {
-        if (tr.type != TrackType::Title || tr.hidden) continue;
+        if (tr.type != TrackType::Title || !p.trackVisible(tr)) continue;
         for (const Clip &c : p.clips) {
             if (c.trackId != tr.id || t < c.start || t >= c.end()) continue;
             auto *txt = new QGraphicsSimpleTextItem(c.title.text);
@@ -287,7 +322,7 @@ void PreviewMonitor::updateTitles(double t) {
     }
 }
 
-void PreviewMonitor::tick() {
+void PreviewMonitor::tick() {                       // live (approximate) mode only
     const double t = m_t0 + m_clock.elapsed() / 1000.0;
     const double dur = m->project().duration();
     if (t >= dur) { m->setPlayhead(dur, true); pause(); return; }
@@ -295,12 +330,33 @@ void PreviewMonitor::tick() {
     syncTo(t, true);
 }
 
+void PreviewMonitor::smoothTick() {                 // rendered preview: interpolate between the player's coarse position updates
+    if (m_mode != Mode::Rendered || m_player->playbackState() != QMediaPlayer::PlayingState) return;
+    const qint64 reported = m_player->position();
+    if (reported != m_lastReported) { m_lastReported = reported; m_lastClock.restart(); }
+    double est = (m_lastReported + m_lastClock.elapsed()) / 1000.0;
+    if (std::fabs(est - reported / 1000.0) > 0.25) est = reported / 1000.0;
+    m->setPlayhead(est, true);
+    if (!m_sliderDrag && m_player->duration() > 0) { QSignalBlocker b(m_slider); m_slider->setValue(int(10000.0 * est * 1000.0 / m_player->duration())); }
+    m_time->setText(humanTime(est, true) + " / " + humanTime(m_player->duration() / 1000.0, true));
+}
+
 void PreviewMonitor::onPlayheadChanged(double t, bool fromPlayback) {
-    if (fromPlayback) { updateTimeLabel(); return; }
-    if (m_mode == Mode::Rendered) { m_player->setPosition(qint64(t * 1000)); return; }
+    if (fromPlayback) return;
+    if (m_mode == Mode::Rendered) { m_player->setPosition(qint64(t * 1000)); updateTimeLabel(); return; }
     if (m_mode == Mode::Source) { pause(); setMode(Mode::Timeline); setCanvas(m->project().settings.width, m->project().settings.height); m_loadedPath.clear(); }
     if (m_tlPlaying) { m_t0 = t; m_clock.restart(); }
     syncTo(t, m_tlPlaying);
+}
+
+void PreviewMonitor::onProjectChanged() {
+    if (m_mode == Mode::Rendered) {                 // the rendered file no longer matches the edit
+        pause(); setMode(Mode::Timeline);
+        setCanvas(m->project().settings.width, m->project().settings.height); m_loadedPath.clear();
+        emit message(tr("The edit changed – press Play to refresh the preview."));
+    }
+    if (m_mode == Mode::Timeline && !m_tlPlaying) syncTo(m->playhead(), false);
+    updateTimeLabel();
 }
 
 void PreviewMonitor::updateTimeLabel() {

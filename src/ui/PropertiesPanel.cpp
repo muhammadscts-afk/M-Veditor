@@ -19,12 +19,12 @@ PropertiesPanel::PropertiesPanel(ProjectModel *model, QWidget *parent) : QWidget
 
     // ---- clip / timing
     gClip = new QGroupBox(tr("Clip")); auto *fc = new QFormLayout(gClip);
-    addSpin(fc, tr("Start"), 0, 86400, 0.1, 3, " s", 1, [](const Clip &c) { return c.start; }, [this](Clip &c, double v) { c.start = v; }, tr("Position on the timeline"));
-    addSpin(fc, tr("Source in"), 0, 86400, 0.1, 3, " s", 1, [](const Clip &c) { return c.in; }, [](Clip &c, double v) { if (v < c.out - 0.05) c.in = v; }, tr("Where the used part of the source starts"));
+    addSpin(fc, tr("Start"), 0, 86400, 0.1, 3, " s", 1, [](const Clip &c) { return c.start; }, [this](Clip &c, double v) { c.start = v; }, tr("Position on the timeline"), false);
+    addSpin(fc, tr("Source in"), 0, 86400, 0.1, 3, " s", 1, [](const Clip &c) { return c.in; }, [](Clip &c, double v) { if (v < c.out - 0.05) c.in = v; }, tr("Where the used part of the source starts"), false);
     addSpin(fc, tr("Source out"), 0, 86400, 0.1, 3, " s", 1, [](const Clip &c) { return c.out; }, [this](Clip &c, double v) {
         double mx = 1e9;
         if (const MediaItem *mi = m->project().mediaById(c.mediaId)) if (mi->kind != "image") mx = mi->duration;
-        if (v > c.in + 0.05) c.out = std::min(v, mx); }, tr("Where the used part of the source ends"));
+        if (v > c.in + 0.05) c.out = std::min(v, mx); }, tr("Where the used part of the source ends"), false);
     m_dur = new QLabel; fc->addRow(tr("Duration"), m_dur);
     m_speed = new QLabel; auto *sb = new QPushButton(tr("Speed…")); sb->setToolTip(tr("Open the speed controller (slow motion / fast motion)"));
     auto *sr = new QHBoxLayout; sr->addWidget(m_speed); sr->addWidget(sb); fc->addRow(tr("Speed"), sr);
@@ -133,21 +133,23 @@ PropertiesPanel::PropertiesPanel(ProjectModel *model, QWidget *parent) : QWidget
 
 void PropertiesPanel::edit(const QString &what, const std::function<void(Clip &)> &fn) {
     if (m_busy) return;
-    const QString id = m->selectedClip();
-    if (id.isEmpty()) return;
-    m->mutate(what, [id, fn](Project &p) { if (Clip *c = p.clipById(id)) fn(*c); });
+    const QStringList ids = m->selectedClips();           // applies to every selected clip
+    if (ids.isEmpty()) return;
+    m->mutate(what, [ids, fn](Project &p) { for (const QString &id : ids) if (Clip *c = p.clipById(id)) fn(*c); });
 }
 
 QDoubleSpinBox *PropertiesPanel::addSpin(QFormLayout *f, const QString &label, double mn, double mx, double step, int dec, const QString &suffix,
-                                         double scale, Getter g, Setter s, const QString &tip) {
+                                         double scale, Getter g, Setter s, const QString &tip, bool multi) {
     auto *sp = new QDoubleSpinBox; sp->setRange(mn, mx); sp->setSingleStep(step); sp->setDecimals(dec); sp->setSuffix(suffix);
     sp->setKeyboardTracking(false); sp->setAccessibleName(label);
     if (!tip.isEmpty()) sp->setToolTip(tip);
     f->addRow(label, sp);
-    connect(sp, &QDoubleSpinBox::valueChanged, this, [this, s, scale, label](double v) {
+    connect(sp, &QDoubleSpinBox::valueChanged, this, [this, s, scale, label, multi](double v) {
         if (m_busy) return;
-        const QString id = m->selectedClip(); if (id.isEmpty()) return;
-        m->mutate(tr("Change %1").arg(label), [id, s, v, scale](Project &p) { if (Clip *c = p.clipById(id)) s(*c, v / scale); }, "prop:" + id + ":" + label);
+        QStringList ids = multi ? m->selectedClips() : QStringList{m->selectedClip()};
+        ids.removeAll(QString());
+        if (ids.isEmpty()) return;
+        m->mutate(tr("Change %1").arg(label), [ids, s, v, scale](Project &p) { for (const QString &id : ids) if (Clip *c = p.clipById(id)) s(*c, v / scale); }, "prop:" + ids.join(',') + ":" + label);
     });
     m_refresh.push_back([sp, g, scale](const Clip &c) { QSignalBlocker b(sp); sp->setValue(g(c) * scale); });
     return sp;

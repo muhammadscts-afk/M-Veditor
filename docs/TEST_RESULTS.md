@@ -6,14 +6,15 @@ Be clear about what has and has not been verified. The development container is 
 
 | Suite | Result | What it proves |
 |---|---|---|
-| `engine_tests` | **110 checks, 0 failures** | The editing engine produces correct, playable media (details below) |
-| `gui_smoke` | **23 checks, 0 failures** | The real main window works: import via probe pipeline, drag-drop to timeline with overlap handling, split, undo/redo, effects, speed, titles, markers, detach audio, copy/paste, save/reopen, export through the UI job runner, dialogs shown |
+| `engine_tests` | **115 checks, 0 failures** | The editing engine produces correct, playable media (details below) |
+| `gui_smoke` | **45 checks, 0 failures** | The real main window works: import via probe pipeline, drag-drop to timeline with overlap handling, split, undo/redo, effects, speed, titles, markers, detach audio, copy/paste, **multi-selection (select, toggle, delete, duplicate, select all)**, **Add-track button and track order/reordering**, **click-to-seek bar**, **Play renders and plays a full preview and becomes stale when the project is edited**, **marker colour regions**, save/reopen, export through the UI job runner, dialogs shown |
 | `M Veditor --selftest` | **PASS** | Headless self-test (bundled-FFmpeg discovery, probe, trim + 2× speed export, MP3 extraction, WAV export) – this is also run by the Windows packaging script on the packaged app |
 
 ### Engine test coverage (all outputs re-opened with ffprobe and analysed)
 * **Trim** – duration, stream presence, A/V sync (≤0.15 s), output not black (luma), audio audible (volume analysis)
 * **Speed** 0.1×, 0.25×, 0.5×, 2×, 4×, 8×, 16× – output duration matches `source/speed`, A/V sync within 0.25 s, picture and sound present
 * **Merge** two clips of different resolution/frame rate/sample rate; sync checked
+* **Track layering, solo and hide** – pixel-level: a later video track covers an earlier one, hiding the top track reveals the one below, soloing a video track shows only that track, soloing an audio track keeps the picture
 * **Transitions** – pixel-level checks with flat dark/light clips: dissolve mid-frame is a blend (≈126), wipe-left / wipe-right reveal the correct side, fade dips to black; all six types render
 * **Effects chain** (rotate, flip, crop, brightness/contrast/saturation, sharpen, colour balance, fades), **picture-in-picture + watermark with opacity**, **reverse**, **image slideshow**
 * **Titles** with quotes, colons, `%{pts}`, backslashes, brackets, commas, multi-line and Arabic text (no filter-injection)
@@ -33,7 +34,8 @@ Be clear about what has and has not been verified. The development container is 
 * Behaviour on a clean Windows 10/11 machine/VM, offline.
 * Real hardware encoders (NVENC / Quick Sync / AMF) – only the automatic fallback path was exercised.
 * Microphone recording (no audio device in the test environment) and audible live playback.
-* Visual layout at other screen resolutions / DPI scaling.
+* Visual layout at other screen resolutions / DPI scaling (the window now fits the available screen and maximizes when no valid saved size exists, but this was only verified in the offscreen test environment).
+* **Smoothness of playback and the playhead on real hardware** – the preview player is a standard video file played by Qt Multimedia and the playhead is interpolated at 60 Hz with a cached timeline background, but actual frame pacing could only be measured on your PC.
 
 ## Stage-5 checklist for a clean Windows 10/11 VM
 
