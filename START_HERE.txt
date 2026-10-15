@@ -1,0 +1,31 @@
+HOW TO GET M Veditor.exe  (no programming tools needed on your PC)
+====================================================================
+This folder is the SOURCE CODE. GitHub (free) can turn it into the Windows
+program for you. You only click; nothing to install.
+
+1. Go to https://github.com and sign up (free). Confirm your email.
+2. Click the "+" at the top right > "New repository".
+   Name it  m-veditor , choose "Public", click "Create repository".
+3. On the new page click the link "uploading an existing file".
+4. Open THIS folder in Windows Explorer, press Ctrl+A to select everything
+   inside it, and DRAG it all into the GitHub page. Wait until it finishes,
+   then click the green "Commit changes" button.
+5. Check the file list on GitHub: there must be a folder called ".github".
+   If it is NOT there: click "Add file" > "Create new file", type this name
+   exactly:   .github/workflows/build-windows.yml
+   open the file build-windows.yml (it is inside .github\workflows in this
+   folder, or from the download I gave you), copy all its text, paste it
+   into GitHub, and click "Commit changes".
+6. Click the "Actions" tab. If asked, click "I understand my workflows,
+   go ahead and enable them". Click "Build Windows app" on the left, then
+   "Run workflow" > "Run workflow". Wait 15-30 minutes (yellow dot = running,
+   green check = done, red X = failed).
+7. Click the finished run. At the bottom, under "Artifacts", click
+   "M-Veditor-windows" to download a zip containing:
+      M Veditor Setup.exe      <- the installer (double-click to install)
+      M Veditor Portable.zip   <- unzip anywhere and run "M Veditor.exe"
+8. Windows may warn "Windows protected your PC" (the program is not
+   digitally signed). Click "More info" > "Run anyway".
+
+If step 6 ends with a red X, open the run, click the failed step, copy the
+red error text and send it to me - I will fix the code.
