@@ -36,13 +36,31 @@ Copy-Item $exe $appDir
 & "$QtDir\bin\windeployqt.exe" --release --compiler-runtime --no-translations --no-system-d3d-compiler --no-opengl-sw "$appDir\$appName.exe"
 
 Write-Host "== 3/6 Bundle FFmpeg ($Flavor flavor)"
-if ($FfmpegUrl -eq "") {
-  $FfmpegUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n7.1-latest-win64-$Flavor-7.1.zip"
-}
 $zip = Join-Path $env:TEMP "ffmpeg-bundle.zip"
 $ex = Join-Path $env:TEMP "ffmpeg-bundle"
 if (Test-Path $ex) { Remove-Item $ex -Recurse -Force }
-Invoke-WebRequest -Uri $FfmpegUrl -OutFile $zip
+$ProgressPreference = "SilentlyContinue"
+if ($FfmpegUrl -ne "") { $urls = @($FfmpegUrl) }
+else {
+  $urls = @(
+    "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-$Flavor.zip",
+    "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n7.1-latest-win64-$Flavor-7.1.zip"
+  )
+  if ($Flavor -eq "gpl") { $urls += "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" }
+}
+$downloaded = $false
+foreach ($u in $urls) {
+  try {
+    Write-Host "Downloading FFmpeg from $u"
+    Invoke-WebRequest -Uri $u -OutFile $zip
+    $FfmpegUrl = $u
+    $downloaded = $true
+    break
+  } catch {
+    Write-Warning "Download failed: $u ($($_.Exception.Message))"
+  }
+}
+if (-not $downloaded) { throw "Could not download FFmpeg from any known address. Pass -FfmpegUrl with a working link to a Windows FFmpeg zip." }
 Expand-Archive $zip -DestinationPath $ex
 $bin = Get-ChildItem $ex -Recurse -Filter ffmpeg.exe | Select-Object -First 1
 if (-not $bin) { throw "ffmpeg.exe not found in the downloaded archive" }
