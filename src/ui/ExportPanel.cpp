@@ -80,6 +80,9 @@ ExportPanel::ExportPanel(ProjectModel *model, QWidget *parent) : QWidget(parent)
     lay->addLayout(row); lay->addWidget(m_bar); lay->addWidget(m_status);
     lay->addStretch(1);
 
+    f->setRowWrapPolicy(QFormLayout::WrapLongRows);
+    for (auto *cb : findChildren<QComboBox *>()) { cb->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon); cb->setMinimumContentsLength(8); }
+    m_dir->setMinimumWidth(40); m_name->setMinimumWidth(40);
     connect(br, &QToolButton::clicked, this, [this] {
         const QString d = QFileDialog::getExistingDirectory(this, tr("Output folder"), m_dir->text());
         if (!d.isEmpty()) { m_dir->setText(d); AppSettings::setExportDir(d); }

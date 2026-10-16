@@ -1,7 +1,21 @@
 #include "Theme.h"
 #include <QApplication>
 #include <QPalette>
+#include <QProxyStyle>
 #include <QStyleFactory>
+#include <QToolTip>
+
+namespace {
+// Fusion style whose tool-tip windows are slightly see-through (255 = opaque).
+class MVStyle : public QProxyStyle {
+public:
+    MVStyle() : QProxyStyle("Fusion") {}
+    int styleHint(StyleHint h, const QStyleOption *o = nullptr, const QWidget *w = nullptr, QStyleHintReturn *r = nullptr) const override {
+        if (h == SH_ToolTipLabel_Opacity) return 228;
+        return QProxyStyle::styleHint(h, o, w, r);
+    }
+};
+}
 
 namespace mv {
 static bool g_dark = true;
@@ -9,7 +23,7 @@ bool Theme::isDark() { return g_dark; }
 
 void Theme::apply(bool dark) {
     g_dark = dark;
-    qApp->setStyle(QStyleFactory::create("Fusion"));
+    qApp->setStyle(new MVStyle);
     QPalette p;
     if (dark) {
         p.setColor(QPalette::Window, QColor(37, 38, 42));
@@ -45,8 +59,12 @@ void Theme::apply(bool dark) {
         p.setColor(QPalette::Disabled, QPalette::ButtonText, QColor(150, 152, 158));
     }
     qApp->setPalette(p);
+    QPalette tp = QToolTip::palette();
+    tp.setColor(QPalette::ToolTipBase, QColor(46, 48, 54)); tp.setColor(QPalette::ToolTipText, Qt::white);
+    tp.setColor(QPalette::Window, QColor(46, 48, 54)); tp.setColor(QPalette::WindowText, Qt::white);
+    QToolTip::setPalette(tp);
     qApp->setStyleSheet(
-        "QToolTip { padding: 4px; border: 1px solid #777; }"
+        "QToolTip { background-color: #2e3036; color: #ffffff; border: 1px solid #7a7d88; padding: 5px 8px; font-size: 9pt; }"
         "QDockWidget::title { padding: 5px; font-weight: bold; }"
         "QToolButton { padding: 4px; }"
         "QPushButton#primary { background: #2d7ff9; color: white; font-weight: bold; padding: 7px 18px; border-radius: 4px; }"

@@ -1,5 +1,6 @@
 #include "Project.h"
 #include <QDir>
+#include <QJsonDocument>
 #include <QFileInfo>
 #include <QUuid>
 #include <algorithm>
@@ -157,6 +158,19 @@ double Project::duration() const {
     double d = 0;
     for (auto &c : clips) d = std::max(d, c.end());
     return d;
+}
+QByteArray Project::renderSignature() const {
+    QJsonObject o;
+    QJsonObject s; s["w"] = settings.width; s["h"] = settings.height; s["fps"] = settings.fps; s["sr"] = settings.sampleRate; s["ch"] = settings.channels;
+    o["s"] = s;
+    QJsonArray m; for (auto &x : media) { QJsonObject j; j["id"] = x.id; j["p"] = x.path; j["d"] = x.duration; m.push_back(j); }
+    o["m"] = m;
+    QJsonArray t;
+    for (auto &x : tracks) { QJsonObject j; j["id"] = x.id; j["t"] = mv::toString(x.type); j["mu"] = x.muted; j["so"] = x.solo; j["hi"] = x.hidden; j["v"] = x.volume; t.push_back(j); }
+    o["t"] = t;
+    QJsonArray c; for (auto &x : clips) c.push_back(x.toJson());
+    o["c"] = c;
+    return QJsonDocument(o).toJson(QJsonDocument::Compact);
 }
 bool Project::trackAudible(const Track &t) const {
     bool anySolo = false;

@@ -10,12 +10,15 @@ namespace mv {
 
 PropertiesPanel::PropertiesPanel(ProjectModel *model, QWidget *parent) : QWidget(parent), m(model) {
     auto *outer = new QVBoxLayout(this); outer->setContentsMargins(0, 0, 0, 0);
-    auto *scroll = new QScrollArea; scroll->setWidgetResizable(true); scroll->setFrameShape(QFrame::NoFrame);
+    auto *scroll = new QScrollArea; scroll->setWidgetResizable(true); scroll->setFrameShape(QFrame::NoFrame); scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     outer->addWidget(scroll);
     auto *content = new QWidget; scroll->setWidget(content);
     auto *lay = new QVBoxLayout(content);
     m_head = new QLabel(tr("Select a clip on the timeline to edit its properties.")); m_head->setWordWrap(true);
     lay->addWidget(m_head);
+    m_name = new QLabel; m_name->setWordWrap(true); m_name->setStyleSheet("font-weight: bold;"); m_name->setMinimumWidth(10);
+    m_name->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);     // long names wrap instead of widening the panel
+    lay->addWidget(m_name);
 
     // ---- clip / timing
     gClip = new QGroupBox(tr("Clip")); auto *fc = new QFormLayout(gClip);
@@ -125,6 +128,9 @@ PropertiesPanel::PropertiesPanel(ProjectModel *model, QWidget *parent) : QWidget
     m_refresh.push_back([this](const Clip &c) { QSignalBlocker b(m_text); if (m_text->toPlainText() != c.title.text) m_text->setPlainText(c.title.text); });
     lay->addWidget(gTitle);
     lay->addStretch(1);
+    for (auto *fl : content->findChildren<QFormLayout *>()) { fl->setRowWrapPolicy(QFormLayout::WrapLongRows); fl->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow); }
+    for (auto *cb : content->findChildren<QComboBox *>()) { cb->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon); cb->setMinimumContentsLength(8); cb->setMaximumWidth(170); }
+    content->setMinimumWidth(0);
 
     connect(m, &ProjectModel::selectionChanged, this, &PropertiesPanel::refresh);
     connect(m, &ProjectModel::changed, this, &PropertiesPanel::refresh);
@@ -142,6 +148,7 @@ QDoubleSpinBox *PropertiesPanel::addSpin(QFormLayout *f, const QString &label, d
                                          double scale, Getter g, Setter s, const QString &tip, bool multi) {
     auto *sp = new QDoubleSpinBox; sp->setRange(mn, mx); sp->setSingleStep(step); sp->setDecimals(dec); sp->setSuffix(suffix);
     sp->setKeyboardTracking(false); sp->setAccessibleName(label);
+    sp->setMinimumWidth(56); sp->setMaximumWidth(104);
     if (!tip.isEmpty()) sp->setToolTip(tip);
     f->addRow(label, sp);
     connect(sp, &QDoubleSpinBox::valueChanged, this, [this, s, scale, label, multi](double v) {
@@ -167,6 +174,7 @@ void PropertiesPanel::refresh() {
     const bool has = c != nullptr;
     for (auto *g : {gClip, gTrans, gVideo, gAudio, gTitle}) g->setVisible(has);
     m_head->setVisible(!has);
+    m_name->setVisible(has);
     if (!has) return;
     const MediaItem *mi = c->isTitle() ? nullptr : m->project().mediaById(c->mediaId);
     const Track *tr = m->project().trackById(c->trackId);
@@ -178,7 +186,10 @@ void PropertiesPanel::refresh() {
     gVideo->setVisible(hasVideo);
     gAudio->setVisible(hasAudio);
     gTrans->setVisible(hasVideo || isTitle ? !isTitle : false);
-    gClip->setTitle(isTitle ? QObject::tr("Title clip") : (mi ? mi->name : QObject::tr("Clip")));
+    QString nm = isTitle ? QObject::tr("Title clip") : (mi ? mi->name : QObject::tr("Clip"));
+    for (const QString &sep : {"_", ".", "-", "/", " "}) nm.replace(sep, sep + QString(QChar(0x200b)));   // allow wrapping inside long file names
+    m_name->setText(nm);
+    gClip->setTitle(QObject::tr("Clip"));
     m_busy = true;
     for (auto &r : m_refresh) r(*c);
     m_busy = false;

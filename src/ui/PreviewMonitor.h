@@ -52,6 +52,8 @@ public:
     explicit PreviewMonitor(ProjectModel *model, QWidget *parent = nullptr);
     void playSource(const QString &mediaId);
     void playRendered(const QString &path, double startSeconds, bool autoplay);
+    // Plays a single unmodified clip straight from its source file (no render needed). in/out in seconds of the source.
+    void playDirect(const QString &path, double in, double out, double startOnTimeline, bool autoplay);
     void togglePlay();
     void pause();
     void stop();
@@ -82,6 +84,7 @@ private:
     void onPlayheadChanged(double t, bool fromPlayback);
     void onProjectChanged();
     void onSeek(double fraction);
+    qint64 rangeMs() const;
     const Clip *activeVideoClip(double t) const;
 
     ProjectModel *m;
@@ -103,7 +106,8 @@ private:
     Mode m_mode = Mode::Timeline;
     bool m_tlPlaying = false, m_sliderDrag = false;
     double m_t0 = 0;
-    qint64 m_lastReported = 0;
+    qint64 m_lastReported = 0, m_offsetMs = 0, m_endMs = 0;   // rendered/direct playback window inside the player file
+    QByteArray m_renderedSig;
     QString m_loadedPath, m_sourceId;
     Pending m_pending;
     double m_markIn = -1, m_markOut = -1, m_srcFps = 30;

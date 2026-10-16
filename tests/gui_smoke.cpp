@@ -14,6 +14,7 @@
 #include <QMenu>
 #include <QTest>
 #include <QToolButton>
+#include <QToolTip>
 #include <QTimer>
 #include <iostream>
 
@@ -164,10 +165,36 @@ int main(int argc, char **argv) {
             prev->togglePlay();       // Timeline mode: renders a full preview, then plays it
             CHECK(waitFor([&] { return prev->mode() == PreviewMonitor::Mode::Rendered; }, 120000), "Play renders the full preview and switches to the rendered player");
             QTest::qWait(300);
-            m->mutate("edit during preview", [&](Project &p) { p.markers.push_back({1.0, "x"}); });
-            CHECK(prev->mode() == PreviewMonitor::Mode::Timeline, "editing makes the rendered preview stale (back to timeline mode)");
-            m->undoStack()->undo();
+            m->mutate("marker during preview", [&](Project &p) { p.markers.push_back({1.0, "x"}); });
+            CHECK(prev->mode() == PreviewMonitor::Mode::Rendered && !w.busy(), "adding a marker does NOT invalidate the preview (no re-render)");
+            m->mutate("rename track during preview", [&](Project &p) { p.tracks[0].name = "renamed"; p.tracks[0].height = 80; });
+            CHECK(prev->mode() == PreviewMonitor::Mode::Rendered, "track names/heights do not invalidate the preview either");
+            QString firstClip = m->project().clips.first().id;
+            m->mutate("edit during preview", [&](Project &p) { p.clipById(firstClip)->fx.brightness = 0.2; });
+            CHECK(prev->mode() == PreviewMonitor::Mode::Timeline, "a real edit (brightness) makes the rendered preview stale (back to timeline mode)");
+            m->undoStack()->undo(); m->undoStack()->undo(); m->undoStack()->undo();
         }
+    }
+    std::cout << "- direct play of a single clip (no render)" << std::endl;
+    {
+        auto *prev = w.findChild<PreviewMonitor *>();
+        const QString keepPath = m->filePath();
+        Project saved = m->project();
+        MediaItem mv0; for (auto &mi : saved.media) if (mi.kind == "video") mv0 = mi;
+        Project single = Project::singleClip(mv0, 1.0, 5.0);
+        single.tracks.clear(); single.ensureDefaultTracks();
+        QString v1id; for (auto &t : single.tracks) if (t.name == "Video 1") v1id = t.id;
+        single.clips[0].trackId = v1id;
+        m->reset(single, QString());
+        QElapsedTimer tm; tm.start();
+        prev->togglePlay();
+        CHECK(prev->mode() == PreviewMonitor::Mode::Rendered && !w.busy() && tm.elapsed() < 3000, QString("single clip plays directly without rendering (%1 ms)").arg(tm.elapsed()));
+        m->mutate("m", [](Project &p) { p.markers.push_back({0.5, "q"}); });
+        CHECK(prev->mode() == PreviewMonitor::Mode::Rendered, "marker during direct play keeps playing");
+        m->mutate("fx", [](Project &p) { p.clips[0].fx.saturation = 1.5; });
+        CHECK(prev->mode() == PreviewMonitor::Mode::Timeline, "an effect on the clip leaves direct mode");
+        prev->pause();
+        m->reset(saved, keepPath);
     }
     std::cout << "- marker colour regions" << std::endl;
     m->mutate("m1", [](Project &p) { p.markers.push_back({2.0, "A"}); p.markers.push_back({5.0, "B"}); });
@@ -200,6 +227,24 @@ int main(int argc, char **argv) {
     CHECK(pr.ok && std::abs(pr.item.duration - expected) < 0.5 && pr.item.hasAudio && pr.item.hasVideo,
           QString("exported file matches timeline length (%1 vs %2)").arg(pr.item.duration).arg(expected));
 
+    std::cout << "- tool-tip appearance" << std::endl;
+    {
+        QToolTip::showText(w.mapToGlobal(QPoint(300, 200)), "Split – cut the selected clip in two at the playhead (S)\nSecond line of the note", &w);
+        QTest::qWait(300);
+        QWidget *tip = nullptr;
+        for (QWidget *t : QApplication::topLevelWidgets()) if (QString(t->metaObject()->className()) == "QTipLabel" && t->isVisible()) tip = t;
+        CHECK(tip != nullptr, "tooltip window appears");
+        if (tip) {
+            CHECK(tip->windowOpacity() < 0.99 && tip->windowOpacity() > 0.6, QString("tooltip is slightly transparent (opacity %1)").arg(tip->windowOpacity()));
+            const QImage img = tip->grab().toImage();
+            const QColor bg = img.pixelColor(3, img.height() / 2);
+            CHECK(bg.lightness() < 90, QString("tooltip background is dark grey (lightness %1)").arg(bg.lightness()));
+            int bright = 0; for (int y = 0; y < img.height(); ++y) for (int x = 0; x < img.width(); ++x) if (img.pixelColor(x, y).lightness() > 200) ++bright;
+            CHECK(bright > 50, QString("tooltip text is white (%1 bright pixels)").arg(bright));
+            tip->grab().save("/tmp/mveditor_tip.png");
+        }
+        QToolTip::hideText();
+    }
     std::cout << "- screenshot" << std::endl;
     w.timeline()->zoomFit();
     m->selectClip(first);

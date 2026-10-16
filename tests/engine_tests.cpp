@@ -256,6 +256,18 @@ int main(int argc, char **argv) {
         CHECK(rd.ok && near(lumaAt(P("solo_audio_picture.mp4"), 1.0), 57, 10), QString("soloing an audio track keeps the picture"));
     }
 
+    section("render signature ignores markers/names, reacts to real edits");
+    {
+        Project p = newProject(v1); auto c = clip(p, v1, trackV1, 0, 0, 2);
+        const QByteArray sig = p.renderSignature();
+        p.markers.push_back({1.0, "a", "#ff0000"}); p.tracks[0].name = "x"; p.tracks[0].height = 99; p.tracks[0].locked = true; p.media[0].name = "renamed.mp4";
+        CHECK(p.renderSignature() == sig, QString("markers, names, heights, locks do not change the render signature"));
+        p.clipById(c.id)->fx.brightness = 0.1;
+        CHECK(p.renderSignature() != sig, QString("an effect changes the render signature"));
+        Project q = newProject(v1); clip(q, v1, trackV1, 0, 0, 2); q.trackById(trackV1)->muted = true;
+        CHECK(q.renderSignature() != sig, QString("muting a track changes the render signature"));
+    }
+
     // ----------------------------------------------------------------------------- titles
     section("titles, captions (incl. special characters)");
     {

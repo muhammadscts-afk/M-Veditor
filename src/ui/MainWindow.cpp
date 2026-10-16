@@ -182,8 +182,8 @@ void MainWindow::buildDocks() {
     m_dockLog->hide();
     tabifyDockWidget(m_dockProps, m_dockExp);
     m_dockProps->raise();
-    m_dockLib->setMinimumWidth(190); m_dockProps->setMinimumWidth(260);
-    resizeDocks({m_dockLib, m_dockProps}, {230, 300}, Qt::Horizontal);
+    m_dockLib->setMinimumWidth(170); m_dockProps->setMinimumWidth(200);
+    resizeDocks({m_dockLib, m_dockProps}, {215, 250}, Qt::Horizontal);
 }
 
 // ======================================================================== actions
@@ -1077,11 +1077,26 @@ void MainWindow::startExport() {
 }
 
 QByteArray MainWindow::projectHash() const {
-    return QCryptographicHash::hash(QJsonDocument(m->project().toJson()).toJson(QJsonDocument::Compact), QCryptographicHash::Sha1);
+    return QCryptographicHash::hash(m->project().renderSignature(), QCryptographicHash::Sha1);
 }
 
 void MainWindow::playTimeline() {
     if (m->project().clips.isEmpty()) { notify(tr("The timeline is empty. Add clips first.")); return; }
+    {   // one unmodified video clip: play the source file directly, no render needed
+        const Project &p = m->project();
+        if (p.clips.size() == 1) {
+            const Clip &c = p.clips.first();
+            const MediaItem *mi = c.isTitle() ? nullptr : p.mediaById(c.mediaId);
+            const Track *tr = p.trackById(c.trackId);
+            if (mi && tr && mi->kind == "video" && mi->hasVideo && !mi->missing && tr->type == TrackType::Video && p.trackVisible(*tr) &&
+                p.trackAudible(*tr) && c.fx.isDefaultForCopy() && c.start < 0.001) {
+                double st = m->playhead();
+                if (st >= c.duration() - 0.05) st = 0;
+                m_prev->playDirect(m->playablePath(mi->id, AppSettings::useProxies()), c.in, c.out, st, true);
+                return;
+            }
+        }
+    }
     if (!m_previewFile.isEmpty() && QFileInfo::exists(m_previewFile) && m_previewHash == projectHash()) {
         double st = m->playhead();
         if (st >= m->project().duration() - 0.05) st = 0;

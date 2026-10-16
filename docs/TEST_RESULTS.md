@@ -6,8 +6,8 @@ Be clear about what has and has not been verified. The development container is 
 
 | Suite | Result | What it proves |
 |---|---|---|
-| `engine_tests` | **115 checks, 0 failures** | The editing engine produces correct, playable media (details below) |
-| `gui_smoke` | **45 checks, 0 failures** | The real main window works: import via probe pipeline, drag-drop to timeline with overlap handling, split, undo/redo, effects, speed, titles, markers, detach audio, copy/paste, **multi-selection (select, toggle, delete, duplicate, select all)**, **Add-track button and track order/reordering**, **click-to-seek bar**, **Play renders and plays a full preview and becomes stale when the project is edited**, **marker colour regions**, save/reopen, export through the UI job runner, dialogs shown |
+| `engine_tests` | **118 checks, 0 failures** | The editing engine produces correct, playable media (details below) |
+| `gui_smoke` | **54 checks, 0 failures** | The real main window works: import via probe pipeline, drag-drop to timeline with overlap handling, split, undo/redo, effects, speed, titles, markers, detach audio, copy/paste, **multi-selection (select, toggle, delete, duplicate, select all)**, **Add-track button and track order/reordering**, **click-to-seek bar**, **Play renders and plays a full preview and becomes stale when the project is edited**, **marker colour regions**, **markers/track renames never invalidate a preview**, **direct play of a single clip without rendering**, **tooltip look (dark grey, translucent, white text)**, save/reopen, export through the UI job runner, dialogs shown |
 | `M Veditor --selftest` | **PASS** | Headless self-test (bundled-FFmpeg discovery, probe, trim + 2× speed export, MP3 extraction, WAV export) – this is also run by the Windows packaging script on the packaged app |
 
 ### Engine test coverage (all outputs re-opened with ffprobe and analysed)

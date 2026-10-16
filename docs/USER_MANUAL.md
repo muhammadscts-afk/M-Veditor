@@ -6,14 +6,14 @@ M Veditor is a video and MP3 editor for Windows 10/11. It works fully offline. Y
 
 | Area | What it does |
 |---|---|
-| **Media library** (left) | Your imported video, audio and images. Drag items onto the timeline, double-click to preview. |
+| **Media library** (left) | Your imported video, audio and images. Buttons: **Import | Remove** on the first row, **Rename | All** (type filter) on the second; the search box is under the list. Drag items onto the timeline, double-click to preview. |
 | **Preview monitor** (top) | Play, pause, stop, seek, step one frame back/forward. Buttons **Source** / **Timeline** switch what you watch. |
 | **Timeline** (bottom) | Tracks: Titles, Video 1, Video 2, Audio 1, Music, Voice-over. Clips live here. The **＋ Add track ▾** button above the track names adds more. |
 | **Properties** (right) | Settings of the selected clip: timing, speed, picture, audio, transition, title text. |
 | **Export** (right, second tab) | Format, resolution, frame rate, quality, bitrate, audio settings, output folder. |
 | **Status bar** | Messages, export progress, estimated time left and errors. **View ▸ Activity log** shows technical details. |
 
-Panels can be resized, moved and closed (**View** menu). **View ▸ Dark / Light theme** switches the look.
+The controls under the picture are on one line (play controls and time on the left; In/Out/Add appear in Source mode; Source, Timeline, Live, Render on the right). Long file names in Properties wrap onto several lines. Hover any button for a dark tip with white text. Panels can be resized, moved and closed (**View** menu). **View ▸ Dark / Light theme** switches the look.
 
 ## 2. Quick start: trim a video and export it
 
@@ -84,7 +84,8 @@ Original audio files are never overwritten. Exports never replace an existing fi
 
 ## 6. Previewing your edit
 
-* **Play (Space)** on the timeline renders a low-resolution preview of the **whole** edit – all tracks, effects, transitions, titles and the audio mix – and then plays it smoothly like a normal video. The first Play after an edit shows "Rendering preview…" with a percentage; after that, Play starts instantly until you change something. If you edit while a preview is playing, it stops and the next Play refreshes it. **Render preview** (F5) forces a fresh render.
+* **Direct play:** if the timeline holds just one unmodified video clip (trimmed is fine), Space plays the file directly – no rendering at all.
+* **Play (Space)** on the timeline renders a low-resolution preview of the **whole** edit – all tracks, effects, transitions, titles and the audio mix – and then plays it smoothly like a normal video. The first Play after an edit shows "Rendering preview…" with a percentage; after that, Play starts instantly until you change something. If you change something that affects the picture or sound (clips, effects, tracks, mute/solo/hide) while a preview is playing, it stops and the next Play refreshes it. **Markers, track names/heights, locks and the marker colours never trigger a re-render.** **Render preview** (F5) forces a fresh render.
 * **Click or drag anywhere on the blue seek bar** under the picture to jump to that point. Scrubbing the timeline ruler shows the picture at the playhead without rendering.
 * **Live** button (off by default): instant but approximate playback of the top video clip only – no effects, no multi-track mix, and it may stutter at clip boundaries. Use it for quick checks.
 * **Source mode**: double-click a library item. Use **Mark In / Mark Out** to choose a part, then **Add to timeline**.

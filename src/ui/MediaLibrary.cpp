@@ -8,6 +8,7 @@
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QFileInfo>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QMimeData>
 #include <QPainter>
@@ -38,17 +39,16 @@ MediaLibrary::MediaLibrary(ProjectModel *model, QWidget *parent) : QWidget(paren
     setAcceptDrops(true);
     auto *lay = new QVBoxLayout(this);
     lay->setContentsMargins(4, 4, 4, 4);
-    auto *bar = new QHBoxLayout;
     auto *imp = new QPushButton(tr("Import…"));
     imp->setToolTip(tr("Import video, audio or image files (Ctrl+I). You can also drop files here."));
-    auto *rem = new QToolButton; rem->setText(tr("Remove")); rem->setToolTip(tr("Remove from the project (the file on disk is never deleted)"));
-    auto *ren = new QToolButton; ren->setText(tr("Rename")); ren->setToolTip(tr("Rename the item inside the project (the file keeps its name)"));
+    auto *rem = new QPushButton(tr("Remove")); rem->setToolTip(tr("Remove from the project (the file on disk is never deleted)"));
+    auto *ren = new QPushButton(tr("Rename")); ren->setToolTip(tr("Rename the item inside the project (the file keeps its name)"));
     m_filter = new QLineEdit; m_filter->setPlaceholderText(tr("Search…")); m_filter->setClearButtonEnabled(true);
-    auto *type = new QComboBox; type->addItems({tr("All"), tr("Video"), tr("Audio"), tr("Images")});
-    bar->addWidget(imp); bar->addWidget(ren); bar->addWidget(rem);
-    lay->addLayout(bar);
-    auto *bar2 = new QHBoxLayout; bar2->addWidget(m_filter, 1); bar2->addWidget(type);
-    lay->addLayout(bar2);
+    auto *type = new QComboBox; type->addItems({tr("All"), tr("Video"), tr("Audio"), tr("Images")}); type->setToolTip(tr("Show only one kind of media"));
+    auto *grid = new QGridLayout; grid->setSpacing(4);          // row 1: Import | Remove      row 2: Rename | All
+    grid->addWidget(imp, 0, 0); grid->addWidget(rem, 0, 1);
+    grid->addWidget(ren, 1, 0); grid->addWidget(type, 1, 1);
+    lay->addLayout(grid);
     m_list = new MediaList;
     m_list->setViewMode(QListView::IconMode);
     m_list->setIconSize(QSize(96, 54));
@@ -61,10 +61,11 @@ MediaLibrary::MediaLibrary(ProjectModel *model, QWidget *parent) : QWidget(paren
     m_list->setContextMenuPolicy(Qt::CustomContextMenu);
     m_list->setAccessibleName(tr("Media library"));
     lay->addWidget(m_list, 1);
+    lay->addWidget(m_filter);
 
     connect(imp, &QPushButton::clicked, this, &MediaLibrary::importRequested);
-    connect(rem, &QToolButton::clicked, this, [this] { if (!currentMediaId().isEmpty()) emit removeRequested(currentMediaId()); });
-    connect(ren, &QToolButton::clicked, this, [this] { if (!currentMediaId().isEmpty()) emit renameRequested(currentMediaId()); });
+    connect(rem, &QPushButton::clicked, this, [this] { if (!currentMediaId().isEmpty()) emit removeRequested(currentMediaId()); });
+    connect(ren, &QPushButton::clicked, this, [this] { if (!currentMediaId().isEmpty()) emit renameRequested(currentMediaId()); });
     connect(m_list, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem *it) { emit previewRequested(it->data(Qt::UserRole).toString()); });
     connect(m_list, &QListWidget::currentItemChanged, this, [this](QListWidgetItem *it) { m->selectMedia(it ? it->data(Qt::UserRole).toString() : QString()); });
     connect(m_list, &QListWidget::customContextMenuRequested, this, [this](const QPoint &p) {

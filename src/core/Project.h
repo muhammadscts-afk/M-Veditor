@@ -126,6 +126,8 @@ public:
     // Solo rules: sound: if any track is soloed only soloed tracks are heard.
     // picture: if any video/title track is soloed only soloed video/title tracks are shown.
     bool trackAudible(const Track &t) const;
+    // Everything that influences the rendered result - deliberately excludes markers, names, track heights, locks.
+    QByteArray renderSignature() const;
     bool trackVisible(const Track &t) const;
     int usageCount(const QString &mediaId) const;
 

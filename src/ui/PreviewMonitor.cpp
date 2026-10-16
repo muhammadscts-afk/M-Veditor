@@ -31,11 +31,11 @@ PreviewMonitor::PreviewMonitor(ProjectModel *model, QWidget *parent) : QWidget(p
 
     m_slider = new SeekSlider(Qt::Horizontal); m_slider->setRange(0, 10000);
     m_slider->setToolTip(tr("Click or drag to jump to any point"));
-    m_slider->setFixedHeight(24);
+    m_slider->setFixedHeight(20);
     m_slider->setStyleSheet(
         "QSlider::groove:horizontal { height: 8px; background: #3a3d45; border-radius: 4px; }"
         "QSlider::sub-page:horizontal { background: #2d7ff9; border-radius: 4px; }"
-        "QSlider::handle:horizontal { width: 20px; margin: -7px 0; border-radius: 10px; background: #ff4757; border: 2px solid #ffffff; }");
+        "QSlider::handle:horizontal { width: 18px; margin: -6px 0; border-radius: 9px; background: #ff4757; border: 2px solid #ffffff; }");
     m_time = new QLabel("00:00.000 / 00:00.000");
     m_modeLabel = new QLabel; m_modeLabel->setStyleSheet("color:#8fb4ff; font-weight:bold;");
     auto mk = [&](QStyle::StandardPixmap ic, const QString &tip) { auto *b = new QToolButton; b->setIcon(style()->standardIcon(ic)); b->setToolTip(tip); b->setAutoRaise(true); b->setIconSize(QSize(22, 22)); return b; };
@@ -47,24 +47,26 @@ PreviewMonitor::PreviewMonitor(ProjectModel *model, QWidget *parent) : QWidget(p
     m_tlBtn = new QToolButton; m_tlBtn->setText(tr("Timeline")); m_tlBtn->setCheckable(true); m_tlBtn->setChecked(true); m_tlBtn->setToolTip(tr("Preview the timeline"));
     m_live = new QToolButton; m_live->setText(tr("Live")); m_live->setCheckable(true);
     m_live->setToolTip(tr("Off (recommended): Play renders a smooth preview of everything (all tracks, effects, mix).\nOn: instant but approximate playback of the top video clip only."));
-    auto *rend = new QPushButton(tr("Render preview")); rend->setToolTip(tr("Re-render the whole timeline at low resolution and play it (F5)"));
+    auto *rend = new QPushButton(tr("Render")); rend->setToolTip(tr("Re-render the whole timeline at low resolution and play it (F5)"));
     auto *markIn = new QToolButton; markIn->setText(tr("In")); markIn->setToolTip(tr("Mark In: start of the part of the source you want to use"));
     auto *markOut = new QToolButton; markOut->setText(tr("Out")); markOut->setToolTip(tr("Mark Out: end of the part of the source you want to use"));
     auto *addB = new QToolButton; addB->setText(tr("Add to timeline")); addB->setToolTip(tr("Add the source (or the marked part) at the playhead"));
 
-    auto *lay = new QVBoxLayout(this); lay->setContentsMargins(0, 0, 0, 0); lay->setSpacing(2);
+    setStyleSheet("QToolButton, QPushButton { font-size: 8pt; padding: 2px 5px; }");
+    m_play->setIconSize(QSize(18, 18)); stopB->setIconSize(QSize(18, 18)); prev->setIconSize(QSize(18, 18)); next->setIconSize(QSize(18, 18));
+    m_time->setStyleSheet("font-size: 8pt;");
+    m_modeLabel->setParent(this); m_modeLabel->hide();
+    auto *lay = new QVBoxLayout(this); lay->setContentsMargins(0, 0, 0, 0); lay->setSpacing(1);
     lay->addWidget(m_view, 1);
     lay->addWidget(m_slider);
-    auto *row = new QHBoxLayout; row->setContentsMargins(6, 0, 6, 0);
+    auto *row = new QHBoxLayout; row->setContentsMargins(4, 0, 4, 2); row->setSpacing(2);      // everything on ONE line
     row->addWidget(prev); row->addWidget(m_play); row->addWidget(stopB); row->addWidget(next); row->addWidget(m_time);
-    row->addStretch(1); row->addWidget(m_srcBtn); row->addWidget(m_tlBtn); row->addWidget(m_live);
-    lay->addLayout(row);
-    auto *row2 = new QHBoxLayout; row2->setContentsMargins(6, 0, 6, 4);
-    row2->addWidget(m_modeLabel); row2->addStretch(1);
-    m_srcTools = new QWidget; auto *st = new QHBoxLayout(m_srcTools); st->setContentsMargins(0, 0, 0, 0);
+    row->addStretch(1);
+    m_srcTools = new QWidget; auto *st = new QHBoxLayout(m_srcTools); st->setContentsMargins(0, 0, 0, 0); st->setSpacing(2);
     st->addWidget(markIn); st->addWidget(markOut); st->addWidget(addB);
-    row2->addWidget(m_srcTools); row2->addWidget(rend);
-    lay->addLayout(row2);
+    row->addWidget(m_srcTools);
+    row->addWidget(m_srcBtn); row->addWidget(m_tlBtn); row->addWidget(m_live); row->addWidget(rend);
+    lay->addLayout(row);
     setMinimumWidth(10);
 
     connect(m_play, &QToolButton::clicked, this, &PreviewMonitor::togglePlay);
@@ -148,6 +150,7 @@ void PreviewMonitor::setMode(Mode md) {
     m_srcTools->setVisible(md == Mode::Source);
     m_live->setEnabled(md != Mode::Source);
     m_modeLabel->setText(md == Mode::Source ? tr("SOURCE") : md == Mode::Rendered ? tr("TIMELINE – rendered preview") : (m_live->isChecked() ? tr("TIMELINE – live (approximate)") : tr("TIMELINE")));
+    m_time->setToolTip(m_modeLabel->text());
     if (md != Mode::Timeline) { for (auto *i : m_titleItems) { m_scene->removeItem(i); delete i; } m_titleItems.clear(); }
     if (md != Mode::Rendered) m_smooth.stop();
 }
@@ -186,11 +189,27 @@ void PreviewMonitor::playRendered(const QString &path, double startSeconds, bool
     m_srcFps = m->project().settings.fps > 0 ? m->project().settings.fps : 30;
     setCanvas(m->project().settings.width, m->project().settings.height);
     m_image->setVisible(false); m_video->setVisible(true);
-    m_loadedPath = path;
+    m_loadedPath = path; m_offsetMs = 0; m_endMs = 0; m_renderedSig = m->project().renderSignature();
     m_player->setPlaybackRate(1.0); m_audio->setVolume(1.0);
     m_player->setSource(QUrl::fromLocalFile(path));
     m_pending = {true, qint64(std::max(0.0, startSeconds) * 1000), autoplay};
 }
+
+void PreviewMonitor::playDirect(const QString &path, double in, double out, double start, bool autoplay) {
+    pause();
+    setMode(Mode::Rendered);
+    showBusy({});
+    m_modeLabel->setText(tr("TIMELINE – direct")); m_time->setToolTip(m_modeLabel->text());
+    m_srcFps = m->project().settings.fps > 0 ? m->project().settings.fps : 30;
+    setCanvas(m->project().settings.width, m->project().settings.height);
+    m_image->setVisible(false); m_video->setVisible(true);
+    m_loadedPath = path; m_offsetMs = qint64(in * 1000); m_endMs = qint64(out * 1000); m_renderedSig = m->project().renderSignature();
+    m_player->setPlaybackRate(1.0); m_audio->setVolume(1.0);
+    m_player->setSource(QUrl::fromLocalFile(path));
+    m_pending = {true, m_offsetMs + qint64(std::max(0.0, start) * 1000), autoplay};
+}
+
+qint64 PreviewMonitor::rangeMs() const { return m_endMs > 0 ? m_endMs - m_offsetMs : m_player->duration(); }
 
 bool PreviewMonitor::isPlaying() const { return m_tlPlaying || m_player->playbackState() == QMediaPlayer::PlayingState; }
 
@@ -205,7 +224,8 @@ void PreviewMonitor::togglePlay() {
         m_play->setIcon(style()->standardIcon(QStyle::SP_MediaPause));
         syncTo(m_t0, true);
     } else {
-        if (m_player->mediaStatus() == QMediaPlayer::EndOfMedia) m_player->setPosition(0);
+        if (m_mode == Mode::Rendered && m_endMs > 0 && m_player->position() >= m_endMs - 50) m_player->setPosition(m_offsetMs);
+        else if (m_player->mediaStatus() == QMediaPlayer::EndOfMedia) m_player->setPosition(m_offsetMs);
         m_player->play();
     }
 }
@@ -218,14 +238,14 @@ void PreviewMonitor::pause() {
 void PreviewMonitor::stop() {
     pause();
     if (m_mode == Mode::Timeline) m->setPlayhead(0);
-    else { m_player->setPosition(0); if (m_mode == Mode::Rendered) m->setPlayhead(0, true); }
+    else { m_player->setPosition(m_mode == Mode::Rendered ? m_offsetMs : 0); if (m_mode == Mode::Rendered) m->setPlayhead(0, true); }
 }
 void PreviewMonitor::stepFrame(int dir) {
     pause();
     if (m_mode == Mode::Timeline) m->setPlayhead(std::max(0.0, m->playhead() + dir / std::max(1.0, m->project().settings.fps)));
     else {
         m_player->setPosition(std::max<qint64>(0, m_player->position() + qint64(dir * 1000.0 / m_srcFps)));
-        if (m_mode == Mode::Rendered) m->setPlayhead(m_player->position() / 1000.0, true);
+        if (m_mode == Mode::Rendered) m->setPlayhead((m_player->position() - m_offsetMs) / 1000.0, true);
     }
 }
 
@@ -233,9 +253,10 @@ void PreviewMonitor::onSeek(double f) {
     if (m_mode == Mode::Timeline) {
         const double dur = std::max(0.0, m->project().duration());
         m->setPlayhead(f * dur);
-    } else if (m_player->duration() > 0) {
-        m_player->setPosition(qint64(f * m_player->duration()));
-        if (m_mode == Mode::Rendered) m->setPlayhead(f * m_player->duration() / 1000.0, true);
+    } else if (rangeMs() > 0) {
+        const qint64 off = m_mode == Mode::Rendered ? m_offsetMs : 0;
+        m_player->setPosition(off + qint64(f * rangeMs()));
+        if (m_mode == Mode::Rendered) m->setPlayhead(f * rangeMs() / 1000.0, true);
         updateTimeLabel();
     }
 }
@@ -330,26 +351,32 @@ void PreviewMonitor::tick() {                       // live (approximate) mode o
     syncTo(t, true);
 }
 
-void PreviewMonitor::smoothTick() {                 // rendered preview: interpolate between the player's coarse position updates
+void PreviewMonitor::smoothTick() {                 // interpolate between the player's coarse position updates
     if (m_mode != Mode::Rendered || m_player->playbackState() != QMediaPlayer::PlayingState) return;
     const qint64 reported = m_player->position();
     if (reported != m_lastReported) { m_lastReported = reported; m_lastClock.restart(); }
-    double est = (m_lastReported + m_lastClock.elapsed()) / 1000.0;
-    if (std::fabs(est - reported / 1000.0) > 0.25) est = reported / 1000.0;
-    m->setPlayhead(est, true);
-    if (!m_sliderDrag && m_player->duration() > 0) { QSignalBlocker b(m_slider); m_slider->setValue(int(10000.0 * est * 1000.0 / m_player->duration())); }
-    m_time->setText(humanTime(est, true) + " / " + humanTime(m_player->duration() / 1000.0, true));
+    double estMs = double(m_lastReported) + double(m_lastClock.elapsed());
+    if (std::fabs(estMs - reported) > 250) estMs = double(reported);
+    if (m_endMs > 0 && estMs >= m_endMs - 20) {      // direct play: stop at the end of the trimmed clip
+        pause(); m_player->setPosition(m_endMs); m->setPlayhead((m_endMs - m_offsetMs) / 1000.0, true); updateTimeLabel(); return;
+    }
+    const double t = std::max(0.0, (estMs - m_offsetMs) / 1000.0);
+    m->setPlayhead(t, true);
+    const qint64 rng = rangeMs();
+    if (!m_sliderDrag && rng > 0) { QSignalBlocker b(m_slider); m_slider->setValue(int(10000.0 * (estMs - m_offsetMs) / rng)); }
+    m_time->setText(humanTime(t, true) + " / " + humanTime(rng / 1000.0, true));
 }
 
 void PreviewMonitor::onPlayheadChanged(double t, bool fromPlayback) {
     if (fromPlayback) return;
-    if (m_mode == Mode::Rendered) { m_player->setPosition(qint64(t * 1000)); updateTimeLabel(); return; }
+    if (m_mode == Mode::Rendered) { m_player->setPosition(m_offsetMs + qint64(t * 1000)); updateTimeLabel(); return; }
     if (m_mode == Mode::Source) { pause(); setMode(Mode::Timeline); setCanvas(m->project().settings.width, m->project().settings.height); m_loadedPath.clear(); }
     if (m_tlPlaying) { m_t0 = t; m_clock.restart(); }
     syncTo(t, m_tlPlaying);
 }
 
 void PreviewMonitor::onProjectChanged() {
+    if (m_mode == Mode::Rendered && m->project().renderSignature() == m_renderedSig) { updateTimeLabel(); return; }   // e.g. a marker was added: nothing to re-render
     if (m_mode == Mode::Rendered) {                 // the rendered file no longer matches the edit
         pause(); setMode(Mode::Timeline);
         setCanvas(m->project().settings.width, m->project().settings.height); m_loadedPath.clear();
@@ -365,7 +392,8 @@ void PreviewMonitor::updateTimeLabel() {
         m_time->setText(humanTime(m->playhead(), true) + " / " + humanTime(dur, true));
         if (!m_sliderDrag) { QSignalBlocker b(m_slider); m_slider->setValue(dur > 0 ? int(10000.0 * m->playhead() / dur) : 0); }
     } else {
-        m_time->setText(humanTime(m_player->position() / 1000.0, true) + " / " + humanTime(m_player->duration() / 1000.0, true));
+        const qint64 off = m_mode == Mode::Rendered ? m_offsetMs : 0;
+        m_time->setText(humanTime(std::max<qint64>(0, m_player->position() - off) / 1000.0, true) + " / " + humanTime(rangeMs() / 1000.0, true));
     }
 }
 
