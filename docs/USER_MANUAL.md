@@ -61,9 +61,11 @@ Select a clip and choose **Video ▸ Speed controller** (Ctrl+R) or the **Speed*
 * Slow motion **0.1× – 0.9×**, normal **1×**, fast motion **1.1× – 16×** (and up to 100×).
 * Use the preset buttons or type a custom value.
 * The dialog shows the new length. On the timeline the clip becomes shorter or longer; following clips on the track are pushed if needed.
-* **Preserve audio pitch** keeps voices natural. Turn it off for the "chipmunk" effect.
+* **Preserve audio pitch** keeps voices natural – in the export **and** in live playback (the sound of a faster or slower clip is time-stretched, so a commentator does not turn into a child's voice). Turn it off for the "chipmunk" effect.
 * **Audio**: keep it, mute it, or **detach** it to an audio track at its original speed.
 * **Play in reverse** is available in the same dialog.
+
+**Keyboard:** select a clip and press **]** (**د** on the Arabic keyboard) to make it 0.1× faster or **[** (**ج**) to make it 0.1× slower. Each press changes the speed by 0.1× (hold Shift is not needed), many presses count as **one** undo step, and the playhead stays on the same frame of the video instead of jumping. The keys do nothing while you are typing in a text or number box (press Enter in a box to leave it so the keys work again). The arrow, comma/period and bracket keys work with both the English and the Arabic keyboard layout.
 
 The speed is applied to the real picture and sound during export – it is not just a preview setting. The original file is untouched.
 
@@ -122,9 +124,11 @@ While exporting you see a progress bar and the estimated time remaining; **Cance
 | Key | Action | Key | Action |
 |---|---|---|---|
 | Space | Play / pause | Ctrl+N / O / S | New / Open / Save |
-| Left / Right | Previous / next frame | Ctrl+Shift+S | Save as |
-| Home / End | Go to start / end | Ctrl+I | Import media |
-| Up / Down | Previous / next clip edge | Ctrl+Z / Ctrl+Y | Undo / Redo | Ctrl+A | Select all clips |
+| **Up / Down** | **Next / previous frame** | Ctrl+Shift+S | Save as |
+| **Right / Left** | **Jump 5 seconds forward / back** | Ctrl+I | Import media |
+| **. (ز) / , (و)** | **Jump 1 second forward / back** | Ctrl+Z / Ctrl+Y | Undo / Redo |
+| Home / End | Go to the start / end | Ctrl+A | Select all clips |
+| **] (د) / [ (ج)** | **Speed +0.1× / −0.1× on the selected clip(s)** | | |
 | S | Split at playhead | Ctrl+C / X / V | Copy / Cut / Paste clip |
 | Delete / Shift+Delete | Delete / ripple delete | Ctrl+D | Duplicate |
 | M | Add marker | T | Add title |

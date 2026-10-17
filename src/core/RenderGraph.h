@@ -56,6 +56,8 @@ public:
     static double outputDuration(const Project &p, const ExportOptions &o);
     static QString defaultFontFile();
     static QString atempoChain(double tempo);
+    // ffmpeg arguments that stream stereo 48 kHz s16le audio from `startSec` at `speed` with the pitch preserved (live preview).
+    static QStringList liveAudioArgs(const QString &path, double startSec, double speed);
 };
 
 } // namespace mv

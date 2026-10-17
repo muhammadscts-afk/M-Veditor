@@ -17,6 +17,8 @@
 #include <QTest>
 #include <QDockWidget>
 #include <QLabel>
+#include <QLineEdit>
+#include <QKeyEvent>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QAbstractSpinBox>
@@ -30,6 +32,7 @@
 
 using namespace mv;
 static int pass = 0, fail = 0;
+static bool near(double a, double b, double tol) { return std::abs(a - b) <= tol; }
 #define CHECK(c, msg) do { if (c) ++pass; else { ++fail; std::cout << "    FAIL: " << QString(msg).toStdString() << "  [" #c "]" << std::endl; } } while (0)
 
 static bool waitFor(const std::function<bool()> &cond, int ms = 20000) {
@@ -273,6 +276,53 @@ int main(int argc, char **argv) {
     CHECK(pr.ok && std::abs(pr.item.duration - expected) < 0.5 && pr.item.hasAudio && pr.item.hasVideo,
           QString("exported file matches timeline length (%1 vs %2)").arg(pr.item.duration).arg(expected));
 
+    std::cout << "- keyboard: arrows, Home/End, Arabic keys, speed steps keep the same frame" << std::endl;
+    {
+        auto *prev = w.findChild<PreviewMonitor *>();
+        prev->pause();
+        Project saved = m->project(); const QString keepPath = m->filePath();
+        MediaItem v0; for (auto &mi : saved.media) if (mi.kind == "video") v0 = mi;
+        Project single = Project::singleClip(v0, 0, 8.0); single.tracks.clear(); single.ensureDefaultTracks();
+        for (auto &t : single.tracks) if (t.name == "Video 1") single.clips[0].trackId = t.id;
+        m->reset(single, QString());
+        const QString cid = m->project().clips[0].id;
+        m->selectClip(cid);
+        if (QWidget *f = QApplication::focusWidget()) f->clearFocus();
+        auto press = [&](int key, const QString &text) { QKeyEvent ev(QEvent::KeyPress, key, Qt::NoModifier, text); QApplication::sendEvent(&w, &ev); };
+        const QString ZAY = QString::fromUtf8("\xd8\xb2"), WAW = QString::fromUtf8("\xd9\x88"), DAL = QString::fromUtf8("\xd8\xaf"), JEEM = QString::fromUtf8("\xd8\xac");
+        const double fps = m->project().settings.fps;
+        m->setPlayhead(1.0);
+        press(Qt::Key_Right, ""); CHECK(near(m->playhead(), 6.0, 1e-6), QString("Right arrow jumps 5 s forward (%1)").arg(m->playhead()));
+        press(Qt::Key_Left, "");  CHECK(near(m->playhead(), 1.0, 1e-6), QString("Left arrow jumps 5 s back (%1)").arg(m->playhead()));
+        press(Qt::Key_Up, "");    CHECK(near(m->playhead(), 1.0 + 1.0 / fps, 1e-6), QString("Up arrow = next frame (%1)").arg(m->playhead()));
+        press(Qt::Key_Down, ""); press(Qt::Key_Down, ""); CHECK(near(m->playhead(), 1.0 - 1.0 / fps, 1e-6), QString("Down arrow = previous frame (%1)").arg(m->playhead()));
+        m->setPlayhead(3.0);
+        press(Qt::Key_Period, "."); CHECK(near(m->playhead(), 4.0, 1e-6), "'.' key jumps 1 s forward");
+        press(0x632, ZAY);          CHECK(near(m->playhead(), 5.0, 1e-6), "Arabic ز jumps 1 s forward");
+        press(0x648, WAW);          CHECK(near(m->playhead(), 4.0, 1e-6), "Arabic و jumps 1 s back");
+        press(Qt::Key_Comma, ",");  CHECK(near(m->playhead(), 3.0, 1e-6), "',' key jumps 1 s back");
+        w.findChild<QAction *>("end")->trigger();  CHECK(near(m->playhead(), 8.0, 1e-6), "End goes to the end");
+        w.findChild<QAction *>("home")->trigger(); CHECK(near(m->playhead(), 0.0, 1e-6), "Home goes to the start");
+        press(Qt::Key_Left, ""); CHECK(near(m->playhead(), 0.0, 1e-6), "jumps never go before the start");
+        // ---- speed steps: the picture must stay on the same source frame
+        m->setPlayhead(4.0);
+        auto moment = [&]() { const Clip *c = m->project().clipById(cid); return c->in + (m->playhead() - c->start) * c->fx.speed; };
+        auto speedNow = [&]() { return m->project().clipById(cid)->fx.speed; };
+        press(Qt::Key_BracketRight, "]"); CHECK(near(speedNow(), 1.1, 1e-9) && near(moment(), 4.0, 1e-6), QString("] speeds up by 0.1 (%1) and stays on the same frame (%2)").arg(speedNow()).arg(moment()));
+        press(0x62F, DAL);                CHECK(near(speedNow(), 1.2, 1e-9) && near(moment(), 4.0, 1e-6), QString("Arabic د speeds up by 0.1 (%1), frame kept (%2)").arg(speedNow()).arg(moment()));
+        press(0x62C, JEEM);               CHECK(near(speedNow(), 1.1, 1e-9) && near(moment(), 4.0, 1e-6), QString("Arabic ج slows down by 0.1 (%1), frame kept (%2)").arg(speedNow()).arg(moment()));
+        press(Qt::Key_BracketLeft, "[");  CHECK(near(speedNow(), 1.0, 1e-9) && near(moment(), 4.0, 1e-6) && near(m->playhead(), 4.0, 1e-6), "[ slows down by 0.1 and the playhead returns to the same spot");
+        for (int i = 0; i < 20; ++i) press(Qt::Key_BracketRight, "]");
+        CHECK(near(speedNow(), 3.0, 1e-9) && near(moment(), 4.0, 1e-6), QString("20 presses = 3.0x, frame kept (%1)").arg(moment()));
+        m->undoStack()->undo();
+        CHECK(near(speedNow(), 1.0, 1e-9), QString("all the quick key presses are ONE undo step (back to %1)").arg(speedNow()));
+        m->mutate("slow", [&](Project &p) { p.clipById(cid)->fx.speed = 0.1; });
+        press(Qt::Key_BracketLeft, "["); CHECK(near(speedNow(), 0.1, 1e-9), "speed cannot go below 0.1x");
+        // typing in a text field must not be hijacked
+        auto *le = w.findChildren<QLineEdit *>().isEmpty() ? nullptr : w.findChildren<QLineEdit *>().first();
+        if (le) { le->setFocus(); QTest::qWait(60); if (QApplication::focusWidget() == le) { const double before = speedNow(); press(0x62F, DAL); CHECK(near(speedNow(), before, 1e-9), "typing Arabic letters in a text box does not change the speed"); } }
+        m->reset(saved, keepPath);
+    }
     std::cout << "- Properties panel fits at minimum width (nothing cut off)" << std::endl;
     {
         w.resize(1366, 768);

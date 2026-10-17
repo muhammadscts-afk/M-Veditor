@@ -1,6 +1,7 @@
 // Preview monitor: source viewing, smooth LIVE timeline playback (double-buffered video + audio tracks),
 // optional exact rendered preview and direct play of a single clip.
 #pragma once
+#include "PitchAudio.h"
 #include "ProjectModel.h"
 #include <QAudioOutput>
 #include <QElapsedTimer>
@@ -58,6 +59,9 @@ public:
     void pause();
     void stop();
     void stepFrame(int dir);
+    void seekRelative(double seconds);          // jump forward/backward without stopping playback
+    void goStart();
+    void goEnd();
     bool isPlaying() const;
     Mode mode() const { return m_mode; }
     bool liveEnabled() const { return m_live->isChecked(); }
@@ -95,6 +99,8 @@ private:
     void syncVoices(double t, bool play);
     void ensureVoices();
     void releaseLive();
+    void stopPitch();
+    double pitchAudioFor(const Clip &c, const MediaItem &mi, double t, bool play, double vol);   // returns the volume for the deck's own audio
     const Clip *nextVideoClip(double after) const;
     void updateLiveNote();
     void applyToPlayer(qint64 posMs, bool play, double rate, double vol);
@@ -122,6 +128,10 @@ private:
     Preload m_pre;                               // the second deck: preloads the next clip
     QVector<Voice> m_voices;                     // audio-track players (audio, music, voice-over)
     QString m_activeClipId;
+    PitchAudio *m_pitch = nullptr;
+    QString m_pitchClipId;
+    double m_pitchSpeed = 0, m_pitchStartSrc = 0, m_activeRate = 1.0;
+    QElapsedTimer m_pitchClock;
     SeekSlider *m_slider;
     QLabel *m_time, *m_modeLabel;
     QToolButton *m_play, *m_srcBtn, *m_tlBtn, *m_live;

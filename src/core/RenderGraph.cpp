@@ -73,6 +73,16 @@ QString RenderGraph::atempoChain(double t) {
     return parts.join(',');
 }
 
+QStringList RenderGraph::liveAudioArgs(const QString &path, double startSec, double speed) {
+    QStringList a = {"-hide_banner", "-v", "error", "-nostdin", "-ss", num(std::max(0.0, startSec)),
+                     "-readrate", num(std::max(0.3, speed * 1.06)),            // decode only slightly faster than the sound is consumed
+                     "-i", QFileInfo(path).absoluteFilePath(), "-vn"};
+    const QString at = atempoChain(speed);
+    if (!at.isEmpty()) a << "-af" << at;
+    a << "-ac" << "2" << "-ar" << "48000" << "-f" << "s16le" << "pipe:1";
+    return a;
+}
+
 QString RenderGraph::defaultFontFile() {
     const QString env = qEnvironmentVariable("MVEDITOR_FONT");
     if (!env.isEmpty()) return env;

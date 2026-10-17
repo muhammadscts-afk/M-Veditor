@@ -34,6 +34,7 @@ public:
 
 protected:
     void closeEvent(QCloseEvent *) override;
+    bool eventFilter(QObject *obj, QEvent *ev) override;
     void dragEnterEvent(QDragEnterEvent *) override;
     void dropEvent(QDropEvent *) override;
 
@@ -81,6 +82,7 @@ private:
     void setTransition(const QString &t);
     void addMarker(double t);
     void jumpEdge(int dir);
+    void stepSpeed(int dir);
     void showClipMenu(const QString &id, const QPoint &gp);
     void showTrackMenu(const QString &id, const QPoint &gp);
     // jobs

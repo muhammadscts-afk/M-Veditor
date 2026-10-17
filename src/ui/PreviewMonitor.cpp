@@ -30,6 +30,7 @@ PreviewMonitor::PreviewMonitor(ProjectModel *model, QWidget *parent) : QWidget(p
     m_note = m_scene->addSimpleText(QString()); m_note->setBrush(QColor(255, 255, 255, 170)); m_note->setZValue(29); m_note->setVisible(false);
     m_player = new QMediaPlayer(this); m_audio = new QAudioOutput(this);
     m_player->setAudioOutput(m_audio); m_player->setVideoOutput(m_video);
+    m_pitch = new PitchAudio(this);
     m_pre.pl = new QMediaPlayer(this); m_pre.ao = new QAudioOutput(this);
     m_pre.pl->setAudioOutput(m_pre.ao); m_pre.pl->setVideoOutput(m_pre.vi);
 
@@ -210,7 +211,10 @@ void PreviewMonitor::setMode(Mode md) {
     updateLiveNote();
 }
 
+void PreviewMonitor::stopPitch() { if (m_pitch) m_pitch->stop(); m_pitchClipId.clear(); m_pitchSpeed = 0; }
+
 void PreviewMonitor::releaseLive() {
+    stopPitch();
     if (m_pre.pl) { m_pre.pl->pause(); m_pre.pl->setSource(QUrl()); }
     m_pre.clipId.clear(); m_pre.path.clear(); m_pre.loaded = false; m_pre.pend.valid = false;
     for (Voice &v : m_voices) { v.pl->pause(); v.pl->setSource(QUrl()); v.clipId.clear(); v.path.clear(); v.loaded = false; v.pend.valid = false; }
@@ -297,6 +301,7 @@ void PreviewMonitor::togglePlay() {
 void PreviewMonitor::pause() {
     if (m_tlPlaying) { m_tlPlaying = false; m_timer.stop(); }
     m_smooth.stop();
+    stopPitch();
     m_player->pause();
     if (m_pre.pl) m_pre.pl->pause();
     for (Voice &v : m_voices) { v.pl->pause(); v.pend.play = false; }
@@ -316,6 +321,18 @@ void PreviewMonitor::stepFrame(int dir) {
         if (m_mode == Mode::Rendered) m->setPlayhead((m_player->position() - m_offsetMs) / 1000.0, true);
     }
 }
+
+void PreviewMonitor::seekRelative(double sec) {
+    if (m_mode == Mode::Timeline) { m->setPlayhead(std::clamp(m->playhead() + sec, 0.0, std::max(0.0, m->project().duration()))); return; }
+    const qint64 off = m_mode == Mode::Rendered ? m_offsetMs : 0;
+    const qint64 rng = std::max<qint64>(0, rangeMs());
+    const qint64 pos = std::clamp<qint64>(m_player->position() - off + qint64(sec * 1000), 0, rng);
+    m_player->setPosition(off + pos);
+    if (m_mode == Mode::Rendered) m->setPlayhead(pos / 1000.0, true);
+    updateTimeLabel();
+}
+void PreviewMonitor::goStart() { seekRelative(-1e9); }
+void PreviewMonitor::goEnd() { seekRelative(1e9); }
 
 void PreviewMonitor::onSeek(double f) {
     if (m_mode == Mode::Timeline) {
@@ -358,6 +375,7 @@ const Clip *PreviewMonitor::nextVideoClip(double after) const {
 }
 
 void PreviewMonitor::applyToPlayer(qint64 posMs, bool play, double rate, double vol) {
+    m_activeRate = rate;
     if (std::llabs(m_player->position() - posMs) > (play ? 350 : 20)) m_player->setPosition(posMs);
     m_player->setPlaybackRate(std::clamp(rate, 0.1, 16.0));
     m_audio->setVolume(float(std::clamp(vol, 0.0, 1.0)));
@@ -372,7 +390,7 @@ void PreviewMonitor::keepPlaying(qint64 target) {
 
 void PreviewMonitor::loadActive(const Clip &c, const MediaItem &mi, qint64 target, bool play, double rate, double vol) {
     const QString path = m->playablePath(mi.id, AppSettings::useProxies());
-    m_activeClipId = c.id;
+    m_activeClipId = c.id; m_activeRate = rate;
     if (m_loadedPath != path) {
         m_loadedPath = path;
         m_pending = {true, target, play, rate, vol};
@@ -412,6 +430,26 @@ void PreviewMonitor::ensureVoices() {
         Voice v; v.pl = new QMediaPlayer(this); v.ao = new QAudioOutput(this); v.pl->setAudioOutput(v.ao);
         wire(v.pl); m_voices.push_back(v);
     }
+}
+
+// Faster/slower clips: the player's own speed change shifts the pitch, so the clip's sound is streamed through ffmpeg's atempo
+// (pitch preserved) instead and the deck's own audio is muted.
+double PreviewMonitor::pitchAudioFor(const Clip &c, const MediaItem &mi, double t, bool play, double vol) {
+    const bool need = play && std::fabs(c.fx.speed - 1.0) > 1e-6 && c.fx.preservePitch && vol > 0 && !c.fx.reverse && mi.hasAudio;
+    if (!need) { if (m_pitch->active()) stopPitch(); return vol; }
+    const double srcNow = c.in + (t - c.start) * c.fx.speed;
+    constexpr double kLatency = 0.28;                         // seconds until the first audio arrives
+    bool restart = m_pitchClipId != c.id || std::fabs(m_pitchSpeed - c.fx.speed) > 1e-6 || !m_pitch->active();
+    if (!restart) {
+        const double e = m_pitchClock.elapsed() / 1000.0;
+        if (e > kLatency + 0.4) { const double predicted = m_pitchStartSrc + (e - kLatency) * c.fx.speed; if (std::fabs(predicted - srcNow) > 0.7 * std::max(1.0, c.fx.speed)) restart = true; }
+    }
+    if (restart) {
+        m_pitchStartSrc = srcNow + kLatency * c.fx.speed;
+        if (!m_pitch->start(mi.path, m_pitchStartSrc, c.fx.speed, vol)) { stopPitch(); return vol; }   // no device: fall back to the player's audio
+        m_pitchClock.start(); m_pitchClipId = c.id; m_pitchSpeed = c.fx.speed;
+    } else m_pitch->setVolume(vol);
+    return 0.0;
 }
 
 void PreviewMonitor::syncVoices(double t, bool play) {
@@ -464,6 +502,7 @@ void PreviewMonitor::syncTo(double t, bool play) {
     updateTimeLabel();
     updateLiveNote();
     if (!c) {
+        stopPitch();
         m_player->pause(); m_video->setVisible(false); m_image->setVisible(false); m_activeClipId.clear();
     } else {
         const MediaItem *mi = m->project().mediaById(c->mediaId);
@@ -482,9 +521,13 @@ void PreviewMonitor::syncTo(double t, bool play) {
             const Track *tr = m->project().trackById(c->trackId);
             const qint64 target = qint64((c->in + (t - c->start) * c->fx.speed) * 1000.0);
             const bool audible = tr && m->project().trackAudible(*tr);                  // track mute / solo
-            const double vol = (c->fx.mute || !audible) ? 0.0 : c->fx.volume * (tr ? tr->volume : 1.0);
+            const double ownVol = (c->fx.mute || !audible) ? 0.0 : c->fx.volume * (tr ? tr->volume : 1.0);
+            const double vol = pictureShown || true ? pitchAudioFor(*c, *mi, t, play, ownVol) : ownVol;       // 0 while the pitch-preserving stream plays
             if (m_activeClipId == c->id) {
-                if (play) { m_audio->setVolume(float(std::clamp(vol, 0.0, 1.0))); keepPlaying(target); } else if (m_pending.valid) { m_pending.posMs = target; m_pending.play = false; } else applyToPlayer(target, false, c->fx.speed, vol);
+                if (play) {
+                    if (std::fabs(m_activeRate - c->fx.speed) > 1e-6 && !m_pending.valid) { m_player->setPlaybackRate(std::clamp(c->fx.speed, 0.1, 16.0)); m_activeRate = c->fx.speed; }   // speed changed while playing
+                    m_audio->setVolume(float(std::clamp(vol, 0.0, 1.0))); keepPlaying(target);
+                } else if (m_pending.valid) { m_pending.posMs = target; m_pending.play = false; } else applyToPlayer(target, false, c->fx.speed, vol);
             } else if (play && m_pre.clipId == c->id && m_pre.loaded) {
                 swapDecks();                                   // next clip was preloaded: switch with no gap
                 m_activeClipId = c->id;

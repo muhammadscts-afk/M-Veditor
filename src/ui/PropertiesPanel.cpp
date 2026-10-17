@@ -210,6 +210,7 @@ QDoubleSpinBox *PropertiesPanel::addSpin(QFormLayout *f, const QString &label, d
     auto *sp = new QDoubleSpinBox; sp->setRange(mn, mx); sp->setSingleStep(step); sp->setDecimals(dec); sp->setSuffix(suffix);
     sp->setKeyboardTracking(false); sp->setAccessibleName(label);
     sp->setMinimumWidth(46); sp->setMaximumWidth(86);
+    connect(sp, &QAbstractSpinBox::editingFinished, sp, [sp] { sp->clearFocus(); });      // keyboard shortcuts work again right after typing a value
     if (!tip.isEmpty()) sp->setToolTip(tip);
     f->addRow(label, sp);
     connect(sp, &QDoubleSpinBox::valueChanged, this, [this, s, scale, label, multi](double v) {

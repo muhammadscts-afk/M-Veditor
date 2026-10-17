@@ -84,6 +84,18 @@ static double peakDb(const QString &file, double from, double len) {
     if (i < 0) return -120;
     return out.mid(i + 11).section(" dB", 0, 0).trimmed().toDouble();
 }
+
+// Pitch of a pure tone, measured by counting zero crossings of the first channel of raw s16le audio.
+static double toneHz(const QByteArray &pcm, int channels, int rate) {
+    const qint16 *d = reinterpret_cast<const qint16 *>(pcm.constData());
+    const int frames = pcm.size() / (2 * channels);
+    int crossings = 0; int prev = 0;
+    for (int i = 0; i < frames; ++i) { const int v = d[i * channels]; const int sgn = v > 300 ? 1 : v < -300 ? -1 : 0; if (sgn && prev && sgn != prev) ++crossings; if (sgn) prev = sgn; }
+    return frames > 0 ? crossings / 2.0 / (double(frames) / rate) : 0;
+}
+static QByteArray runCapture(const QStringList &args) {
+    QProcess p; p.start(tools::ffmpegPath(), args); p.waitForFinished(60000); return p.readAllStandardOutput();
+}
 static ExportOptions opts(const QString &fmt, const QString &file, int w = 0, int h = 0) {
     ExportOptions o; o.format = fmt; o.outputPath = P(file); o.width = w; o.height = h; o.quality = "draft"; o.x264Preset = "ultrafast";
     return o;
@@ -255,6 +267,25 @@ int main(int argc, char **argv) {
         Project d = mk(); d.trackById(trackA)->solo = true;      // soloing an AUDIO track must not blank the picture
         auto rd = render(d, opts("mp4-h264", "solo_audio_picture.mp4"));
         CHECK(rd.ok && near(lumaAt(P("solo_audio_picture.mp4"), 1.0), 57, 10), QString("soloing an audio track keeps the picture"));
+    }
+
+    section("speed change keeps the voice natural (pitch preserved) - measured");
+    {
+        // source: 330 Hz tone. At 2x speed the duration halves; with pitch preservation the tone must stay 330 Hz (not 660 Hz).
+        Project p = newProject(music); auto c = clip(p, music, trackM, 0, 0, 6); p.clipById(c.id)->fx.speed = 2.0;
+        auto r = render(p, opts("wav", "pitch_keep.wav"));
+        const double keep = toneHz(runCapture({"-v", "error", "-i", P("pitch_keep.wav"), "-ac", "1", "-ar", "8000", "-f", "s16le", "-"}), 1, 8000);
+        CHECK(r.ok && near(r.out.item.duration, 3.0, 0.2) && near(keep, 330, 15), QString("export at 2x keeps the pitch: %1 Hz (source 330 Hz)").arg(keep));
+        Project q = newProject(music); auto c2 = clip(q, music, trackM, 0, 0, 6); q.clipById(c2.id)->fx.speed = 2.0; q.clipById(c2.id)->fx.preservePitch = false;
+        auto r2 = render(q, opts("wav", "pitch_shift.wav"));
+        const double shifted = toneHz(runCapture({"-v", "error", "-i", P("pitch_shift.wav"), "-ac", "1", "-ar", "8000", "-f", "s16le", "-"}), 1, 8000);
+        CHECK(r2.ok && near(shifted, 660, 25), QString("without 'preserve pitch' the tone doubles: %1 Hz").arg(shifted));
+        for (double sp : {0.5, 1.5, 4.0}) {
+            const QByteArray pcm = runCapture(RenderGraph::liveAudioArgs(P("music.mp3"), 0.5, sp));
+            const double hz = toneHz(pcm, 2, 48000);
+            const double expectSec = (8.0 - 0.5) / sp;
+            CHECK(near(hz, 330, 15) && near(pcm.size() / 4.0 / 48000.0, expectSec, 0.3), QString("live preview audio at %1x: %2 Hz, %3 s (expected 330 Hz, %4 s)").arg(sp).arg(hz).arg(pcm.size() / 4.0 / 48000.0).arg(expectSec));
+        }
     }
 
     section("title fonts and effects (family/bold/italic, outline, shadow, caps, opacity)");

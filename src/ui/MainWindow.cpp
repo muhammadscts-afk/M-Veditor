@@ -9,6 +9,7 @@
 #include <QActionGroup>
 #include <QApplication>
 #include <QCloseEvent>
+#include <QKeyEvent>
 #include <QColorDialog>
 #include <QCryptographicHash>
 #include <QGuiApplication>
@@ -164,6 +165,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         }
     }
     m_tl->setRegionsVisible(AppSettings::s().value("timeline/regions", true).toBool());
+    qApp->installEventFilter(this);
     updateActions(); updateTitle();
     QTimer::singleShot(0, this, [this] { resizeDocks({m_dockLib, m_dockProps}, {1, 1}, Qt::Horizontal); });   // saved layouts must not widen the panels
 }
@@ -317,12 +319,19 @@ void MainWindow::buildActions() {
     });
 
     add("play", tr("Play / Pause"), QKeySequence(Qt::Key_Space), [this] { m_prev->togglePlay(); });
-    add("prevframe", tr("Previous frame"), QKeySequence(Qt::Key_Left), [this] { m_prev->stepFrame(-1); });
-    add("nextframe", tr("Next frame"), QKeySequence(Qt::Key_Right), [this] { m_prev->stepFrame(1); });
-    add("home", tr("Go to start"), QKeySequence(Qt::Key_Home), [this] { m->setPlayhead(0); });
-    add("end", tr("Go to end"), QKeySequence(Qt::Key_End), [this] { m->setPlayhead(m->project().duration()); });
-    add("prevedge", tr("Previous clip edge"), QKeySequence(Qt::Key_Up), [this] { jumpEdge(-1); });
-    add("nextedge", tr("Next clip edge"), QKeySequence(Qt::Key_Down), [this] { jumpEdge(1); });
+    // The arrow / bracket / comma / period keys are handled in eventFilter() so they also work with the Arabic keyboard layout.
+    add("nextframe", tr("Next frame\tUp"), {}, [this] { m_prev->stepFrame(1); });
+    add("prevframe", tr("Previous frame\tDown"), {}, [this] { m_prev->stepFrame(-1); });
+    add("fwd5", tr("Jump 5 seconds forward\tRight"), {}, [this] { m_prev->seekRelative(5); });
+    add("back5", tr("Jump 5 seconds back\tLeft"), {}, [this] { m_prev->seekRelative(-5); });
+    add("fwd1", tr("Jump 1 second forward\t. (ز)"), {}, [this] { m_prev->seekRelative(1); });
+    add("back1", tr("Jump 1 second back\t, (و)"), {}, [this] { m_prev->seekRelative(-1); });
+    add("home", tr("Go to start"), QKeySequence(Qt::Key_Home), [this] { m_prev->goStart(); });
+    add("end", tr("Go to end"), QKeySequence(Qt::Key_End), [this] { m_prev->goEnd(); });
+    add("prevedge", tr("Previous clip edge"), {}, [this] { jumpEdge(-1); });
+    add("nextedge", tr("Next clip edge"), {}, [this] { jumpEdge(1); });
+    add("speedup", tr("Speed +0.1×\t] (د)"), {}, [this] { stepSpeed(+1); }, tr("Make the selected clip(s) 0.1× faster"));
+    add("speeddown", tr("Speed −0.1×\t[ (ج)"), {}, [this] { stepSpeed(-1); }, tr("Make the selected clip(s) 0.1× slower"));
 
     add("exportv", tr("Export &video…"), QKeySequence("Ctrl+E"), [this] { m_dockExp->show(); m_dockExp->raise(); m_exp->selectFormat("mp4-h264"); }, tr("Open the export panel with a video format"));
     add("exporta", tr("Export &audio (MP3)…"), QKeySequence("Ctrl+Shift+E"), [this] { m_dockExp->show(); m_dockExp->raise(); m_exp->selectFormat("mp3"); });
@@ -359,7 +368,7 @@ void MainWindow::buildMenus() {
     edit->addSeparator(); edit->addAction(a["marker"]); edit->addAction(a["snap"]);
 
     auto *video = menuBar()->addMenu(tr("&Video"));
-    for (auto *k : {"speed", "reverse", "rot", "fliph", "flipv"}) video->addAction(a[k]);
+    for (auto *k : {"speed", "speedup", "speeddown", "reverse", "rot", "fliph", "flipv"}) video->addAction(a[k]);
     video->addSeparator();
     for (auto *k : {"title", "subtitle", "caption", "watermark", "pip"}) video->addAction(a[k]);
     video->addSeparator(); video->addAction(a["detach"]);
@@ -391,7 +400,7 @@ void MainWindow::buildMenus() {
     for (auto *d : {m_dockLib, m_dockProps, m_dockExp, m_dockLog}) view->addAction(d->toggleViewAction());
     view->addSeparator(); view->addAction(a["resetlayout"]);
     view->addSeparator();
-    for (auto *k : {"play", "prevframe", "nextframe", "home", "end", "prevedge", "nextedge"}) view->addAction(a[k]);
+    for (auto *k : {"play", "nextframe", "prevframe", "fwd5", "back5", "fwd1", "back1", "home", "end", "prevedge", "nextedge"}) view->addAction(a[k]);
 
     auto *ex = menuBar()->addMenu(tr("E&xport"));
     for (auto *k : {"exportv", "exporta", "exportnow", "preview", "extract"}) ex->addAction(a[k]);
@@ -819,6 +828,58 @@ void MainWindow::tidyTrack(Project &p, const QString &trackId) {      // push cl
     }
 }
 
+void MainWindow::stepSpeed(int dir) {
+    const QStringList ids = m->selectedClips();
+    const Clip *c = m->project().clipById(m->selectedClip());
+    if (ids.isEmpty() || !c) { notify(tr("Select a clip first, then press ] (د) to speed up or [ (ج) to slow down by 0.1×.")); return; }
+    const MediaItem *mi = c->isTitle() ? nullptr : m->project().mediaById(c->mediaId);
+    if (!mi || mi->kind == "image") { notify(tr("Titles and still images don't have a speed.")); return; }
+    const double ns = std::clamp(std::round((c->fx.speed + dir * 0.1) * 10.0) / 10.0, 0.1, 100.0);
+    if (std::fabs(ns - c->fx.speed) < 1e-9) { notify(tr("The speed is already at its limit (%1×).").arg(ns)); return; }
+    const double ph = m->playhead();
+    const bool inside = ph >= c->start - 1e-6 && ph <= c->end() + 1e-6;
+    const double srcMoment = c->in + (ph - c->start) * c->fx.speed;             // keep the playhead on the same frame
+    const QString primary = c->id;
+    m->mutate(tr("Change speed"), [&](Project &p) {
+        QStringList tracks;
+        for (const QString &id : ids) {
+            Clip *x = p.clipById(id); if (!x || x->isTitle()) continue;
+            const MediaItem *xm = p.mediaById(x->mediaId); if (!xm || xm->kind == "image") continue;
+            x->fx.speed = ns; if (!tracks.contains(x->trackId)) tracks << x->trackId;
+        }
+        for (const QString &t : tracks) tidyTrack(p, t);
+    }, "speed-step");                                                              // many key presses = one undo step
+    if (inside) if (const Clip *pc = m->project().clipById(primary)) m->setPlayhead(pc->start + (srcMoment - pc->in) / std::max(0.01, pc->fx.speed));
+    notify(tr("Speed %1×").arg(QString::number(ns, 'f', 1)));
+}
+
+bool MainWindow::eventFilter(QObject *obj, QEvent *ev) {
+    if (ev->type() != QEvent::KeyPress) return QMainWindow::eventFilter(obj, ev);
+    auto *ke = static_cast<QKeyEvent *>(ev);
+    if (ke->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier)) return false;
+    QWidget *fw = QApplication::focusWidget();                                      // never steal keys from text / number entry
+    if (fw && (fw->inherits("QLineEdit") || fw->inherits("QPlainTextEdit") || fw->inherits("QTextEdit") || fw->inherits("QAbstractSpinBox") || fw->inherits("QComboBox") || fw->inherits("QAbstractItemView"))) return false;
+    if (QApplication::activePopupWidget() || QApplication::activeModalWidget()) return false;
+    const int key = ke->key(); const QString txt = ke->text();
+    quint32 vk = 0;
+#ifdef Q_OS_WIN
+    vk = ke->nativeVirtualKey();
+#endif
+    const QString ZAY = QString::fromUtf8("\xd8\xb2"), WAW = QString::fromUtf8("\xd9\x88"), DAL = QString::fromUtf8("\xd8\xaf"), JEEM = QString::fromUtf8("\xd8\xac");
+    const bool speedUp = key == Qt::Key_BracketRight || key == Qt::Key_BraceRight || txt == "]" || txt == "}" || txt == DAL || key == 0x62F || vk == 0xDD;   // ]  or  د
+    const bool speedDn = key == Qt::Key_BracketLeft || key == Qt::Key_BraceLeft || txt == "[" || txt == "{" || txt == JEEM || key == 0x62C || vk == 0xDB;    // [  or  ج
+    const bool fwd1 = key == Qt::Key_Period || key == Qt::Key_Greater || txt == "." || txt == ZAY || key == 0x632 || vk == 0xBE;                            // .  or  ز
+    const bool back1 = key == Qt::Key_Comma || key == Qt::Key_Less || txt == "," || txt == WAW || key == 0x648 || vk == 0xBC;                                // ,  or  و
+    if (speedUp || speedDn) { if (!ke->isAutoRepeat()) stepSpeed(speedUp ? +1 : -1); return true; }                // one step per press
+    if (fwd1) { m_prev->seekRelative(+1); return true; }
+    if (back1) { m_prev->seekRelative(-1); return true; }
+    if (key == Qt::Key_Up) { m_prev->stepFrame(+1); return true; }
+    if (key == Qt::Key_Down) { m_prev->stepFrame(-1); return true; }
+    if (key == Qt::Key_Right) { m_prev->seekRelative(+5); return true; }
+    if (key == Qt::Key_Left) { m_prev->seekRelative(-5); return true; }
+    return false;
+}
+
 void MainWindow::applySpeedDialog() {
     const Clip *c = m->project().clipById(m->selectedClip());
     if (!c || c->isTitle()) { notify(tr("Select a clip on the timeline first.")); return; }
@@ -831,6 +892,9 @@ void MainWindow::applySpeedDialog() {
     const QStringList ids = m->selectedClips();
     const QString audioTrack = m->project().firstTrackOfType(TrackType::Audio);
     if (mode == SpeedDialog::DetachAudio && audioTrack.isEmpty()) { notify(tr("There is no audio track to detach to."), true); return; }
+    const double phBefore = m->playhead();
+    const bool phInside = phBefore >= c->start - 1e-6 && phBefore <= c->end() + 1e-6;
+    const double srcMoment = c->in + (phBefore - c->start) * c->fx.speed;       // the frame the playhead is on
     int applied = 0;
     m->mutate(tr("Change speed"), [&](Project &p) {
         QStringList tracks;
@@ -849,6 +913,8 @@ void MainWindow::applySpeedDialog() {
         }
         for (const QString &t : tracks) tidyTrack(p, t);
     });
+    if (const Clip *pc = m->project().clipById(primary)) if (phInside)       // stay on the same frame instead of jumping forward/back
+        m->setPlayhead(pc->start + (srcMoment - pc->in) / std::max(0.01, pc->fx.speed));
     if (const Clip *pc = m->project().clipById(primary))
         notify(tr("Speed set to %1× on %2 clip(s) – the clip is now %3 long.").arg(QString::number(s, 'g', 4)).arg(applied).arg(humanTime(pc->duration(), true)));
 }
