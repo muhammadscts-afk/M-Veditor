@@ -3,6 +3,7 @@
 #include "FfmpegTools.h"
 #include "MainWindow.h"
 #include "PreviewMonitor.h"
+#include "PropertiesPanel.h"
 #include "Theme.h"
 #include <QApplication>
 #include <QDir>
@@ -16,6 +17,12 @@
 #include <QTest>
 #include <QDockWidget>
 #include <QLabel>
+#include <QScrollArea>
+#include <QScrollBar>
+#include <QAbstractSpinBox>
+#include <QComboBox>
+#include <QPushButton>
+#include <QCheckBox>
 #include <QToolButton>
 #include <QToolTip>
 #include <QTimer>
@@ -266,6 +273,32 @@ int main(int argc, char **argv) {
     CHECK(pr.ok && std::abs(pr.item.duration - expected) < 0.5 && pr.item.hasAudio && pr.item.hasVideo,
           QString("exported file matches timeline length (%1 vs %2)").arg(pr.item.duration).arg(expected));
 
+    std::cout << "- Properties panel fits at minimum width (nothing cut off)" << std::endl;
+    {
+        w.resize(1366, 768);
+        w.resizeDocks({w.findChild<QDockWidget *>("dockLib"), w.findChild<QDockWidget *>("dockProps")}, {1, 1}, Qt::Horizontal);
+        QTest::qWait(300);
+        auto *pp = w.findChild<PropertiesPanel *>(); auto *sa = pp->findChild<QScrollArea *>();
+        auto check = [&](const QString &what) {
+            QTest::qWait(250);
+            const int vw = sa->viewport()->width();
+            QStringList bad;
+            for (QWidget *c : sa->widget()->findChildren<QWidget *>()) {
+                if (!c->isVisibleTo(sa->widget())) continue;
+                const QString cls = c->metaObject()->className();
+                if (!(c->inherits("QAbstractSpinBox") || c->inherits("QComboBox") || c->inherits("QPushButton") || c->inherits("QCheckBox") || cls == "QLabel" || cls == "mv::ClickLabel" || c->inherits("QPlainTextEdit"))) continue;
+                if (cls == "QPlainTextEdit" || c->inherits("QAbstractScrollArea")) {}
+                const int right = c->mapTo(sa->viewport(), QPoint(c->width(), 0)).x();
+                if (right > vw + 1) bad << QString("%1 right=%2 > viewport=%3").arg(cls).arg(right).arg(vw);
+            }
+            CHECK(bad.isEmpty() && !sa->horizontalScrollBar()->isVisible(), QString("%1: all controls fully visible at min width (viewport %2 px): %3").arg(what).arg(vw).arg(bad.join("; ")));
+        };
+        QString vidClip, titleClip; for (auto &c : m->project().clips) { if (c.isTitle()) titleClip = c.id; else if (m->project().mediaById(c.mediaId) && m->project().mediaById(c.mediaId)->kind == "video") vidClip = c.id; }
+        m->selectClip(vidClip); check("video clip");
+        w.findChild<QDockWidget *>("dockProps")->grab().save("/tmp/mveditor_props.png");
+        if (!titleClip.isEmpty()) { m->selectClip(titleClip); check("title clip"); }
+        m->selectClip({});
+    }
     std::cout << "- tool-tip appearance" << std::endl;
     {
         QToolTip::showText(w.mapToGlobal(QPoint(300, 200)), "Split – cut the selected clip in two at the playhead (S)\nSecond line of the note", &w);

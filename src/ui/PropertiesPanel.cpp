@@ -13,11 +13,13 @@
 namespace mv {
 
 PropertiesPanel::PropertiesPanel(ProjectModel *model, QWidget *parent) : QWidget(parent), m(model) {
+    setStyleSheet("QLabel, QCheckBox, QGroupBox, QPlainTextEdit { font-size: 8pt; } QDoubleSpinBox, QComboBox { font-size: 8pt; }"
+                  "QPushButton { font-size: 8pt; padding: 2px 5px; } QGroupBox { margin-top: 8px; padding-top: 4px; font-weight: bold; }");
     auto *outer = new QVBoxLayout(this); outer->setContentsMargins(0, 0, 0, 0);
-    auto *scroll = new QScrollArea; scroll->setWidgetResizable(true); scroll->setFrameShape(QFrame::NoFrame); scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    auto *scroll = new QScrollArea; scroll->setWidgetResizable(true); scroll->setFrameShape(QFrame::NoFrame); scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     outer->addWidget(scroll);
     auto *content = new QWidget; scroll->setWidget(content);
-    auto *lay = new QVBoxLayout(content);
+    auto *lay = new QVBoxLayout(content); lay->setContentsMargins(3, 3, 3, 3); lay->setSpacing(4);
     m_head = new QLabel(tr("Select a clip on the timeline to edit its properties.")); m_head->setWordWrap(true);
     lay->addWidget(m_head);
     m_name = new QLabel; m_name->setWordWrap(true); m_name->setStyleSheet("font-weight: bold;"); m_name->setMinimumWidth(10);
@@ -34,7 +36,8 @@ PropertiesPanel::PropertiesPanel(ProjectModel *model, QWidget *parent) : QWidget
         if (v > c.in + 0.05) c.out = std::min(v, mx); }, tr("Where the used part of the source ends"), false);
     m_dur = new QLabel; fc->addRow(tr("Duration"), m_dur);
     m_speed = new QLabel; auto *sb = new QPushButton(tr("Speed…")); sb->setToolTip(tr("Open the speed controller (slow motion / fast motion)"));
-    auto *sr = new QHBoxLayout; sr->addWidget(m_speed); sr->addWidget(sb); fc->addRow(tr("Speed"), sr);
+    sb->setMaximumWidth(62); sb->setToolTip(tr("Open the speed controller (slow motion / fast motion)"));
+    auto *sr = new QHBoxLayout; sr->setSpacing(4); sr->addWidget(m_speed); sr->addWidget(sb); sr->addStretch(1); fc->addRow(tr("Speed"), sr);
     connect(sb, &QPushButton::clicked, this, &PropertiesPanel::speedDialogRequested);
     addSpin(fc, tr("Fade in"), 0, 60, 0.1, 2, " s", 1, [](const Clip &c) { return c.fx.fadeIn; }, [](Clip &c, double v) { c.fx.fadeIn = v; }, tr("Fade picture and sound in at the start"));
     addSpin(fc, tr("Fade out"), 0, 60, 0.1, 2, " s", 1, [](const Clip &c) { return c.fx.fadeOut; }, [](Clip &c, double v) { c.fx.fadeOut = v; }, tr("Fade picture and sound out at the end"));
@@ -183,8 +186,11 @@ PropertiesPanel::PropertiesPanel(ProjectModel *model, QWidget *parent) : QWidget
     m_refresh.push_back([this](const Clip &c) { QSignalBlocker b(m_text); if (m_text->toPlainText() != c.title.text) m_text->setPlainText(c.title.text); });
     lay->addWidget(gTitle);
     lay->addStretch(1);
-    for (auto *fl : content->findChildren<QFormLayout *>()) { fl->setRowWrapPolicy(QFormLayout::WrapLongRows); fl->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow); }
-    for (auto *cb : content->findChildren<QComboBox *>()) { cb->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon); cb->setMinimumContentsLength(8); cb->setMaximumWidth(170); }
+    for (auto *fl : content->findChildren<QFormLayout *>()) {
+        fl->setRowWrapPolicy(QFormLayout::WrapLongRows); fl->setFieldGrowthPolicy(QFormLayout::FieldsStayAtSizeHint);
+        fl->setContentsMargins(4, 4, 4, 4); fl->setHorizontalSpacing(4); fl->setVerticalSpacing(3); fl->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    }
+    for (auto *cb : content->findChildren<QComboBox *>()) { cb->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon); cb->setMinimumContentsLength(5); cb->setMinimumWidth(60); cb->setMaximumWidth(112); }
     content->setMinimumWidth(0);
 
     connect(m, &ProjectModel::selectionChanged, this, &PropertiesPanel::refresh);
@@ -203,7 +209,7 @@ QDoubleSpinBox *PropertiesPanel::addSpin(QFormLayout *f, const QString &label, d
                                          double scale, Getter g, Setter s, const QString &tip, bool multi) {
     auto *sp = new QDoubleSpinBox; sp->setRange(mn, mx); sp->setSingleStep(step); sp->setDecimals(dec); sp->setSuffix(suffix);
     sp->setKeyboardTracking(false); sp->setAccessibleName(label);
-    sp->setMinimumWidth(56); sp->setMaximumWidth(104);
+    sp->setMinimumWidth(46); sp->setMaximumWidth(86);
     if (!tip.isEmpty()) sp->setToolTip(tip);
     f->addRow(label, sp);
     connect(sp, &QDoubleSpinBox::valueChanged, this, [this, s, scale, label, multi](double v) {
@@ -217,8 +223,14 @@ QDoubleSpinBox *PropertiesPanel::addSpin(QFormLayout *f, const QString &label, d
     return sp;
 }
 QCheckBox *PropertiesPanel::addCheck(QFormLayout *f, const QString &label, std::function<bool(const Clip &)> g, std::function<void(Clip &, bool)> s, const QString &tip) {
-    auto *cb = new QCheckBox(label); if (!tip.isEmpty()) cb->setToolTip(tip);
-    f->addRow(cb);
+    auto *cb = new QCheckBox; cb->setAccessibleName(label);
+    auto *lb = new ClickLabel(label); lb->setWordWrap(true); lb->setMinimumWidth(10);
+    lb->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);          // long texts wrap instead of widening the panel
+    if (!tip.isEmpty()) { cb->setToolTip(tip); lb->setToolTip(tip); }
+    auto *row = new QHBoxLayout; row->setSpacing(4); row->setContentsMargins(0, 0, 0, 0);
+    row->addWidget(cb, 0, Qt::AlignTop); row->addWidget(lb, 1);
+    f->addRow(row);
+    connect(lb, &ClickLabel::clicked, cb, &QCheckBox::toggle);
     connect(cb, &QCheckBox::toggled, this, [this, s, label](bool v) { edit(tr("Change %1").arg(label), [s, v](Clip &c) { s(c, v); }); });
     m_refresh.push_back([cb, g](const Clip &c) { QSignalBlocker b(cb); cb->setChecked(g(c)); });
     return cb;

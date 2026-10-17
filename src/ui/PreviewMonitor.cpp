@@ -328,11 +328,11 @@ void PreviewMonitor::onSeek(double f) {
     }
 }
 
-const Clip *PreviewMonitor::activeVideoClip(double t) const {
+const Clip *PreviewMonitor::activeVideoClip(double t, bool hiddenTracks) const {
     const Project &p = m->project();
     for (int i = p.tracks.size() - 1; i >= 0; --i) {        // later video tracks are drawn on top
         const Track &tr = p.tracks[i];
-        if (tr.type != TrackType::Video || !p.trackVisible(tr)) continue;
+        if (tr.type != TrackType::Video || p.trackVisible(tr) == hiddenTracks) continue;    // hiddenTracks: look at tracks whose picture is hidden
         for (const Clip &c : p.clips) {
             if (c.trackId != tr.id || c.isTitle()) continue;
             const MediaItem *mi = p.mediaById(c.mediaId);
@@ -457,7 +457,9 @@ void PreviewMonitor::syncVoices(double t, bool play) {
 }
 
 void PreviewMonitor::syncTo(double t, bool play) {
+    bool pictureShown = true;
     const Clip *c = activeVideoClip(t);
+    if (!c) { c = activeVideoClip(t, true); pictureShown = false; }       // picture hidden (H): keep decoding so the sound continues
     updateTitles(t);
     updateTimeLabel();
     updateLiveNote();
@@ -468,19 +470,21 @@ void PreviewMonitor::syncTo(double t, bool play) {
         if (!mi || mi->missing) { m_player->pause(); m_video->setVisible(false); }
         else if (mi->kind == "image") {
             m_player->pause(); m_video->setVisible(false); m_activeClipId.clear();
-            if (m_activeImageId != mi->id) {
+            if (!pictureShown) { m_image->setVisible(false); }
+            else if (m_activeImageId != mi->id) {
                 m_activeImageId = mi->id;
                 QPixmap pm(mi->path); m_image->setPixmap(pm);
                 m_image->setScale(std::min(double(m_cw) / std::max(1, pm.width()), double(m_ch) / std::max(1, pm.height())));
             }
-            m_image->setVisible(true);
+            if (pictureShown) m_image->setVisible(true);
         } else {
-            m_image->setVisible(false); m_video->setVisible(true);
+            m_image->setVisible(false); m_video->setVisible(pictureShown);
             const Track *tr = m->project().trackById(c->trackId);
             const qint64 target = qint64((c->in + (t - c->start) * c->fx.speed) * 1000.0);
-            const double vol = c->fx.mute ? 0.0 : c->fx.volume * (tr ? tr->volume : 1.0);
+            const bool audible = tr && m->project().trackAudible(*tr);                  // track mute / solo
+            const double vol = (c->fx.mute || !audible) ? 0.0 : c->fx.volume * (tr ? tr->volume : 1.0);
             if (m_activeClipId == c->id) {
-                if (play) keepPlaying(target); else if (m_pending.valid) { m_pending.posMs = target; m_pending.play = false; } else applyToPlayer(target, false, c->fx.speed, vol);
+                if (play) { m_audio->setVolume(float(std::clamp(vol, 0.0, 1.0))); keepPlaying(target); } else if (m_pending.valid) { m_pending.posMs = target; m_pending.play = false; } else applyToPlayer(target, false, c->fx.speed, vol);
             } else if (play && m_pre.clipId == c->id && m_pre.loaded) {
                 swapDecks();                                   // next clip was preloaded: switch with no gap
                 m_activeClipId = c->id;

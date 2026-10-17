@@ -5,12 +5,24 @@
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QLabel>
+#include <QMouseEvent>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QWidget>
 #include <functional>
 
 namespace mv {
+
+// A label that behaves like the text of a check box: it can wrap onto several lines and clicking it toggles the box.
+class ClickLabel : public QLabel {
+    Q_OBJECT
+public:
+    using QLabel::QLabel;
+signals:
+    void clicked();
+protected:
+    void mouseReleaseEvent(QMouseEvent *e) override { QLabel::mouseReleaseEvent(e); if (e->button() == Qt::LeftButton) emit clicked(); }
+};
 
 class PropertiesPanel : public QWidget {
     Q_OBJECT

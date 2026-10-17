@@ -106,7 +106,7 @@ private:
     void onProjectChanged();
     void onSeek(double fraction);
     qint64 rangeMs() const;
-    const Clip *activeVideoClip(double t) const;
+    const Clip *activeVideoClip(double t, bool hiddenTracks = false) const;
 
     ProjectModel *m;
     QGraphicsScene *m_scene;

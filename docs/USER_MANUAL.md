@@ -13,7 +13,7 @@ M Veditor is a video and MP3 editor for Windows 10/11. It works fully offline. Y
 | **Export** (right, second tab) | Format, resolution, frame rate, quality, bitrate, audio settings, output folder. |
 | **Status bar** | Messages, export progress, estimated time left and errors. **View ▸ Activity log** shows technical details. |
 
-The controls under the picture are on one line (play controls and time on the left; In/Out/Add appear in Source mode; Source, Timeline, Live, Render on the right). Long file names in Properties wrap onto several lines. Hover any button for a dark tip with white text. The Media library and Properties panels start at their narrowest width so the picture area is as large as possible; drag their edge if you want them wider. Panels can be resized, moved and closed (**View** menu). **View ▸ Dark / Light theme** switches the look.
+The controls under the picture are on one line (play controls and time on the left; In/Out/Add appear in Source mode; Source, Timeline, Live, Render on the right). Long file names in Properties wrap onto several lines. Hover any button for a dark tip with white text. The Properties panel is laid out so that every control (number boxes with their arrows, the Speed button, the Transition box, long names and option texts) stays fully visible even at its narrowest width; long texts wrap onto several lines. The Media library and Properties panels start at their narrowest width so the picture area is as large as possible; drag their edge if you want them wider. Panels can be resized, moved and closed (**View** menu). **View ▸ Dark / Light theme** switches the look.
 
 ## 2. Quick start: trim a video and export it
 
@@ -48,7 +48,7 @@ The controls under the picture are on one line (play controls and time on the le
 * **Reorder** tracks by dragging a track header up or down (a yellow line shows where it will land), or right-click ▸ **Move track up / down**.
 * **Layering:** video tracks *lower in the list are drawn on top of* those above them – so Video 2 covers Video 1. Title tracks are always drawn on top of all video. Use this for overlays, picture-in-picture and watermarks.
 * **Clips can move between tracks** by dragging up or down: video clips between video tracks (or onto an audio track to use only their sound), audio clips between audio/music/voice-over tracks, titles between title tracks.
-* **M (Mute)** silences the track. **S (Solo)** means *"listen to this track only"*: while any track is soloed every other track is silent (preview and export). On a video or title track Solo also shows only the soloed picture tracks. Click S again to turn it off – the track header says "silent (solo)" for tracks that are being skipped. **L (Lock)** protects a track's clips. **H (Hide)** hides a track's picture (sound is unaffected).
+* **M (Mute)** silences the track. **S (Solo)** means *"listen to this track only"*: while any track is soloed every other track is silent (preview and export). On a video or title track Solo also shows only the soloed picture tracks. Click S again to turn it off – the track header says "silent (solo)" for tracks that are being skipped. **L (Lock)** protects a track's clips. **H (Hide)** hides a track's picture only – its sound keeps playing in the preview and the export. In live playback M and S also silence the video's own sound immediately.
 * Hover any button for a tip. Right-click a header to rename, set track volume, change height, move or delete. Drag the lower edge of a header to resize the track.
 
 ### Markers and colour regions
