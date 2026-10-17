@@ -476,6 +476,7 @@ void TimelineView::mousePressEvent(QMouseEvent *e) {
     const Hit h = hitTest(pt);
     const bool ctrl = e->modifiers() & Qt::ControlModifier, shift = e->modifiers() & Qt::ShiftModifier;
     if (h.clipId.isEmpty()) {
+        if (e->button() == Qt::RightButton && h.track >= 0) { emit laneContextMenu(pr.tracks[h.track].id, std::max(0.0, xToTime(pt.x())), e->globalPosition().toPoint()); return; }
         if (e->button() != Qt::LeftButton) return;
         m_drag = Drag::Rubber; m_bandMoved = false; m_band = QRect(pt, pt);
         m_bandBase = (ctrl || shift) ? m->selectedClips() : QStringList();

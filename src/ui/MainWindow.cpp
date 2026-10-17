@@ -119,6 +119,21 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     });
     connect(m_prev, &PreviewMonitor::renderPreviewRequested, this, [this] { renderPreview(true); });
     connect(m_prev, &PreviewMonitor::timelinePlayRequested, this, &MainWindow::playTimeline);
+    connect(m_tl, &TimelineView::laneContextMenu, this, [this](const QString &trackId, double t, const QPoint &gp) {
+        const Track *trk = m->project().trackById(trackId);
+        if (!trk) return;
+        QMenu menu(this);
+        if (trk->type == TrackType::Title) {
+            menu.addAction(tr("Add title here"), [this, t, trackId] { addTitle("title", t, trackId); });
+            menu.addAction(tr("Add subtitle here"), [this, t, trackId] { addTitle("subtitle", t, trackId); });
+            menu.addAction(tr("Add caption here"), [this, t, trackId] { addTitle("caption", t, trackId); });
+            menu.addSeparator();
+        }
+        menu.addAction(tr("Paste here"), [this, t] { pasteClip(t); })->setEnabled(!m_clipboard.isEmpty());
+        menu.addAction(tr("Add marker here"), [this, t] { addMarker(t); });
+        menu.exec(gp);
+    });
+    connect(m_prev, &PreviewMonitor::stopPressed, this, [this] { if (busy() && m_kind == JobKind::Preview) m_job->cancel(); });
     connect(m_tl, &TimelineView::addTrackRequested, this, [this](int t) { addTrack(TrackType(t)); });
     connect(m_prev, &PreviewMonitor::message, this, [this](const QString &t) { notify(t); });
     connect(m_prev, &PreviewMonitor::addToTimelineRequested, this, [this](const QString &id, double in, double out) { addClipFromMedia(id, {}, m->playhead(), in, out); });
@@ -150,6 +165,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     }
     m_tl->setRegionsVisible(AppSettings::s().value("timeline/regions", true).toBool());
     updateActions(); updateTitle();
+    QTimer::singleShot(0, this, [this] { resizeDocks({m_dockLib, m_dockProps}, {1, 1}, Qt::Horizontal); });   // saved layouts must not widen the panels
 }
 
 MainWindow::~MainWindow() = default;
@@ -182,8 +198,8 @@ void MainWindow::buildDocks() {
     m_dockLog->hide();
     tabifyDockWidget(m_dockProps, m_dockExp);
     m_dockProps->raise();
-    m_dockLib->setMinimumWidth(170); m_dockProps->setMinimumWidth(200);
-    resizeDocks({m_dockLib, m_dockProps}, {215, 250}, Qt::Horizontal);
+    m_dockLib->setMinimumWidth(150); m_dockProps->setMinimumWidth(170);
+    resizeDocks({m_dockLib, m_dockProps}, {1, 1}, Qt::Horizontal);        // start at the minimum width
 }
 
 // ======================================================================== actions
@@ -743,12 +759,12 @@ void MainWindow::copySelected(bool cut) {
     updateActions();
     if (cut) deleteSelected(false); else notify(tr("%1 clip(s) copied.").arg(m_clipboard.size()));
 }
-void MainWindow::pasteClip() {
+void MainWindow::pasteClip(double atTime) {
     if (m_clipboard.isEmpty()) return;
     double base = 1e12;
     for (const Clip &c : m_clipboard) base = std::min(base, c.start);
     const QVector<Clip> src = m_clipboard;
-    const double at = m->playhead();
+    const double at = atTime >= 0 ? atTime : m->playhead();
     QStringList created; QString problem;
     m->mutate(tr("Paste clips"), [&](Project &p) {
         for (Clip n : src) {
@@ -837,9 +853,9 @@ void MainWindow::applySpeedDialog() {
         notify(tr("Speed set to %1× on %2 clip(s) – the clip is now %3 long.").arg(QString::number(s, 'g', 4)).arg(applied).arg(humanTime(pc->duration(), true)));
 }
 
-void MainWindow::addTitle(const QString &kind) {
+void MainWindow::addTitle(const QString &kind, double at, const QString &trackId) {
     const Project &p = m->project();
-    QString tid = p.firstTrackOfType(TrackType::Title);
+    QString tid = trackId.isEmpty() ? p.firstTrackOfType(TrackType::Title) : trackId;
     if (tid.isEmpty()) { notify(tr("There is no title track. Add one from Video > Add track."), true); return; }
     Clip c; c.id = newId("c"); c.trackId = tid; c.in = 0; c.out = 4;
     c.title.kind = kind;
@@ -847,7 +863,7 @@ void MainWindow::addTitle(const QString &kind) {
     else if (kind == "subtitle") { c.title.text = tr("Subtitle text"); c.title.fontSize = 52; c.title.posY = 0.85; }
     else { c.title.text = tr("Caption"); c.title.fontSize = 40; c.title.posY = 0.92; c.title.boxOpacity = 0.6; }
     c.fx.fadeIn = 0.3; c.fx.fadeOut = 0.3;
-    c.start = p.resolveOverlap(tid, m->playhead(), c.out - c.in);
+    c.start = p.resolveOverlap(tid, at >= 0 ? at : m->playhead(), c.out - c.in);
     const QString id = c.id;
     m->mutate(tr("Add %1").arg(kind), [c](Project &pr) { pr.clips.push_back(c); });
     m->selectClip(id);
@@ -1115,8 +1131,8 @@ void MainWindow::renderPreview(bool autoPlay) {
     m_autoPlay = autoPlay; m_playStart = m->playhead(); m_pendingHash = projectHash();
     const Project &p = m->project();
     ExportOptions o; o.format = "mp4-h264"; o.preview = true; o.quality = "draft"; o.audioBitrateKbps = 96;
-    o.height = 480; o.width = int(std::lround(480.0 * p.settings.width / std::max(1, p.settings.height))) & ~1;
-    o.fps = std::min(30.0, p.settings.fps > 0 ? p.settings.fps : 30.0);
+    o.height = 360; o.width = int(std::lround(360.0 * p.settings.width / std::max(1, p.settings.height))) & ~1;      // small = fast
+    o.fps = std::min(25.0, p.settings.fps > 0 ? p.settings.fps : 25.0);
     QDir().mkpath(AppSettings::dataDir() + "/preview");
     o.outputPath = AppSettings::dataDir() + "/preview/preview_" + QString::number(QDateTime::currentSecsSinceEpoch()) + ".mp4";
     m_prev->showBusy(tr("Preparing preview…"));

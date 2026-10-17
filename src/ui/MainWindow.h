@@ -69,10 +69,10 @@ private:
     void deleteSelected(bool ripple);
     void duplicateSelected();
     void copySelected(bool cut);
-    void pasteClip();
+    void pasteClip(double at = -1);
     void detachAudio();
     void applySpeedDialog();
-    void addTitle(const QString &kind);
+    void addTitle(const QString &kind, double at = -1, const QString &trackId = {});
     void addWatermark();
     void applyPip();
     void removeSilence();

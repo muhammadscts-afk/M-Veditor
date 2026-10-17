@@ -1,6 +1,10 @@
 #include "PropertiesPanel.h"
 #include "MediaProbe.h"
 #include <QColorDialog>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QFontDialog>
+#include <QHBoxLayout>
 #include <QComboBox>
 #include <QPushButton>
 #include <QScrollArea>
@@ -102,13 +106,64 @@ PropertiesPanel::PropertiesPanel(ProjectModel *model, QWidget *parent) : QWidget
 
     // ---- title
     gTitle = new QGroupBox(tr("Title / caption")); auto *ftt = new QFormLayout(gTitle);
-    m_text = new QPlainTextEdit; m_text->setFixedHeight(64); ftt->addRow(tr("Text"), m_text);
+    m_text = new QPlainTextEdit; m_text->setFixedHeight(64); m_text->setMinimumWidth(10);
+    ftt->addRow(new QLabel(tr("Text")));
+    ftt->addRow(m_text);                                   // full width: the label sits above the box
     connect(m_text, &QPlainTextEdit::textChanged, this, [this] {
         if (m_busy) return; const QString t = m_text->toPlainText();
         const QString id = m->selectedClip();
         m->mutate(tr("Edit title text"), [id, t](Project &p) { if (Clip *c = p.clipById(id)) c->title.text = t; }, "title-text:" + id);
     });
     addSpin(ftt, tr("Size"), 8, 400, 4, 0, " px", 1, [](const Clip &c) { return c.title.fontSize; }, [](Clip &c, double v) { c.title.fontSize = v; }, tr("Height in pixels at 1080p; scales with the export size"));
+    auto *fontBtn = new QPushButton(tr("Font…")); fontBtn->setToolTip(tr("Choose the font type (family, bold, italic)"));
+    auto *fxBtn = new QPushButton(tr("Effects…")); fxBtn->setToolTip(tr("Font effects: outline, shadow, capitals, opacity"));
+    auto *fr = new QHBoxLayout; fr->addWidget(fontBtn); fr->addWidget(fxBtn); ftt->addRow(fr);
+    m_fontInfo = new QLabel; m_fontInfo->setWordWrap(true); m_fontInfo->setMinimumWidth(10); m_fontInfo->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    ftt->addRow(m_fontInfo);
+    connect(fontBtn, &QPushButton::clicked, this, [this] {
+        const Clip *c = m->project().clipById(m->selectedClip()); if (!c) return;
+        QFont init(c->title.fontFamily.isEmpty() ? QFont().family() : c->title.fontFamily);
+        init.setBold(c->title.bold); init.setItalic(c->title.italic); init.setPixelSize(20);
+        bool ok = false;
+        const QFont f = QFontDialog::getFont(&ok, init, this, tr("Title font"), QFontDialog::ScalableFonts);
+        if (!ok) return;
+        const QString fam = f.family(); const bool b = f.bold(), it = f.italic();
+        edit(tr("Title font"), [fam, b, it](Clip &x) { x.title.fontFamily = fam; x.title.bold = b; x.title.italic = it; });
+    });
+    connect(fxBtn, &QPushButton::clicked, this, [this] {
+        const Clip *c = m->project().clipById(m->selectedClip()); if (!c) return;
+        TitleSpec t = c->title;
+        QDialog d(this); d.setWindowTitle(tr("Font effects"));
+        auto *f = new QFormLayout(&d);
+        auto colorBtn = [&](QColor &col) { auto *b = new QPushButton(tr("Colour…")); b->setStyleSheet(QString("QPushButton { background-color: %1; color: %2; }").arg(col.name(), col.lightness() > 128 ? "#000" : "#fff"));
+            QObject::connect(b, &QPushButton::clicked, &d, [&col, b, this] { QColor n = QColorDialog::getColor(col, this, tr("Colour")); if (n.isValid()) { col = n; b->setStyleSheet(QString("QPushButton { background-color: %1; color: %2; }").arg(col.name(), col.lightness() > 128 ? "#000" : "#fff")); } });
+            return b; };
+        auto *caps = new QCheckBox(tr("ALL CAPITALS")); caps->setChecked(t.caps); f->addRow(caps);
+        auto *opac = new QDoubleSpinBox; opac->setRange(5, 100); opac->setSuffix(" %"); opac->setDecimals(0); opac->setValue(t.textOpacity * 100); f->addRow(tr("Text opacity"), opac);
+        auto *ol = new QCheckBox(tr("Outline")); ol->setChecked(t.outline); f->addRow(ol);
+        auto *olw = new QDoubleSpinBox; olw->setRange(1, 30); olw->setSuffix(" px"); olw->setDecimals(0); olw->setValue(t.outlineWidth); f->addRow(tr("Outline width"), olw);
+        QColor olCol(t.outlineColor); f->addRow(tr("Outline colour"), colorBtn(olCol));
+        auto *sh = new QCheckBox(tr("Shadow")); sh->setChecked(t.shadow); f->addRow(sh);
+        auto *shx = new QDoubleSpinBox; shx->setRange(-30, 30); shx->setDecimals(0); shx->setSuffix(" px"); shx->setValue(t.shadowX); f->addRow(tr("Shadow offset X"), shx);
+        auto *shy = new QDoubleSpinBox; shy->setRange(-30, 30); shy->setDecimals(0); shy->setSuffix(" px"); shy->setValue(t.shadowY); f->addRow(tr("Shadow offset Y"), shy);
+        auto *shop = new QDoubleSpinBox; shop->setRange(5, 100); shop->setSuffix(" %"); shop->setDecimals(0); shop->setValue(t.shadowOpacity * 100); f->addRow(tr("Shadow opacity"), shop);
+        QColor shCol(t.shadowColor); f->addRow(tr("Shadow colour"), colorBtn(shCol));
+        auto *bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel); f->addRow(bb);
+        QObject::connect(bb, &QDialogButtonBox::accepted, &d, &QDialog::accept); QObject::connect(bb, &QDialogButtonBox::rejected, &d, &QDialog::reject);
+        if (d.exec() != QDialog::Accepted) return;
+        t.caps = caps->isChecked(); t.textOpacity = opac->value() / 100; t.outline = ol->isChecked(); t.outlineWidth = olw->value(); t.outlineColor = olCol.name();
+        t.shadow = sh->isChecked(); t.shadowX = shx->value(); t.shadowY = shy->value(); t.shadowOpacity = shop->value() / 100; t.shadowColor = shCol.name();
+        edit(tr("Font effects"), [t](Clip &x) {
+            x.title.caps = t.caps; x.title.textOpacity = t.textOpacity; x.title.outline = t.outline; x.title.outlineWidth = t.outlineWidth; x.title.outlineColor = t.outlineColor;
+            x.title.shadow = t.shadow; x.title.shadowX = t.shadowX; x.title.shadowY = t.shadowY; x.title.shadowOpacity = t.shadowOpacity; x.title.shadowColor = t.shadowColor; });
+    });
+    m_refresh.push_back([this](const Clip &c) {
+        QString s = c.title.fontFamily.isEmpty() ? tr("Font: default") : tr("Font: %1").arg(c.title.fontFamily);
+        if (c.title.bold) s += tr(", bold"); if (c.title.italic) s += tr(", italic");
+        if (c.title.outline) s += tr(", outline"); if (c.title.shadow) s += tr(", shadow"); if (c.title.caps) s += tr(", capitals");
+        for (const QString &sep : {"_", ",", " "}) s.replace(sep, sep + QString(QChar(0x200b)));
+        m_fontInfo->setText(s);
+    });
     m_color = new QPushButton(tr("Text colour…")); m_boxColor = new QPushButton(tr("Box colour…"));
     ftt->addRow(m_color); ftt->addRow(m_boxColor);
     connect(m_color, &QPushButton::clicked, this, [this] {

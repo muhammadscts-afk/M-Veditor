@@ -28,7 +28,7 @@ private:
     void edit(const QString &what, const std::function<void(Clip &)> &fn);
 
     ProjectModel *m;
-    QLabel *m_head, *m_dur, *m_speed, *m_name;
+    QLabel *m_head, *m_dur, *m_speed, *m_name, *m_fontInfo;
     QGroupBox *gClip, *gTrans, *gVideo, *gAudio, *gTitle;
     QVector<std::function<void(const Clip &)>> m_refresh;
     bool m_busy = false;

@@ -44,7 +44,7 @@ ExportPanel::ExportPanel(ProjectModel *model, QWidget *parent) : QWidget(parent)
     m_fps = new QComboBox; m_fps->addItem(tr("Project rate"), 0.0); for (double v : {24.0, 25.0, 30.0, 50.0, 60.0}) m_fps->addItem(QString("%1 fps").arg(v), v);
     m_quality = new QComboBox; m_quality->addItem(tr("Draft (small file)"), "draft"); m_quality->addItem(tr("Standard"), "standard"); m_quality->addItem(tr("High"), "high"); m_quality->addItem(tr("Maximum"), "max");
     m_quality->setCurrentIndex(1);
-    m_vbr = new QSpinBox; m_vbr->setRange(0, 200000); m_vbr->setSingleStep(500); m_vbr->setSuffix(" kbps"); m_vbr->setSpecialValueText(tr("Automatic (by quality)"));
+    m_vbr = new QSpinBox; m_vbr->setRange(0, 200000); m_vbr->setSingleStep(500); m_vbr->setSuffix(" kbps"); m_vbr->setSpecialValueText(tr("Auto")); m_vbr->setMinimumWidth(70);
     m_vbr->setToolTip(tr("Leave on Automatic for constant quality, or set a target video bitrate"));
     m_hw = new QComboBox; m_hw->addItem(tr("Software (most compatible)"), "none"); m_hw->addItem(tr("Automatic hardware"), "auto");
     m_hw->addItem("NVIDIA NVENC", "nvenc"); m_hw->addItem("Intel Quick Sync", "qsv"); m_hw->addItem("AMD AMF", "amf");
@@ -66,7 +66,8 @@ ExportPanel::ExportPanel(ProjectModel *model, QWidget *parent) : QWidget(parent)
     auto *dr = new QHBoxLayout; dr->addWidget(m_dir, 1); dr->addWidget(br);
     f->addRow(tr("Folder"), dr);
     m_name = new QLineEdit("My video"); f->addRow(tr("File name"), m_name);
-    m_copy = new QCheckBox(tr("Fast export without re-encoding (when possible)"));
+    m_copy = new QCheckBox(tr("Fast export, no re-encoding"));
+    m_copy->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     m_copy->setToolTip(tr("Keeps the original quality and is very fast. Only available for a single, unmodified clip. Cuts happen at the nearest keyframe."));
     m_info = new QLabel; m_info->setWordWrap(true);
     lay->addLayout(f);
@@ -81,7 +82,7 @@ ExportPanel::ExportPanel(ProjectModel *model, QWidget *parent) : QWidget(parent)
     lay->addStretch(1);
 
     f->setRowWrapPolicy(QFormLayout::WrapLongRows);
-    for (auto *cb : findChildren<QComboBox *>()) { cb->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon); cb->setMinimumContentsLength(8); }
+    for (auto *cb : findChildren<QComboBox *>()) { cb->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon); cb->setMinimumContentsLength(6); cb->setMinimumWidth(80); }
     m_dir->setMinimumWidth(40); m_name->setMinimumWidth(40);
     connect(br, &QToolButton::clicked, this, [this] {
         const QString d = QFileDialog::getExistingDirectory(this, tr("Output folder"), m_dir->text());

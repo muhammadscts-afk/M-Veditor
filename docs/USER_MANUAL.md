@@ -13,7 +13,7 @@ M Veditor is a video and MP3 editor for Windows 10/11. It works fully offline. Y
 | **Export** (right, second tab) | Format, resolution, frame rate, quality, bitrate, audio settings, output folder. |
 | **Status bar** | Messages, export progress, estimated time left and errors. **View ▸ Activity log** shows technical details. |
 
-The controls under the picture are on one line (play controls and time on the left; In/Out/Add appear in Source mode; Source, Timeline, Live, Render on the right). Long file names in Properties wrap onto several lines. Hover any button for a dark tip with white text. Panels can be resized, moved and closed (**View** menu). **View ▸ Dark / Light theme** switches the look.
+The controls under the picture are on one line (play controls and time on the left; In/Out/Add appear in Source mode; Source, Timeline, Live, Render on the right). Long file names in Properties wrap onto several lines. Hover any button for a dark tip with white text. The Media library and Properties panels start at their narrowest width so the picture area is as large as possible; drag their edge if you want them wider. Panels can be resized, moved and closed (**View** menu). **View ▸ Dark / Light theme** switches the look.
 
 ## 2. Quick start: trim a video and export it
 
@@ -39,7 +39,7 @@ The controls under the picture are on one line (play controls and time on the le
 * **Fade in / fade out** – Properties ▸ Clip (fades picture and sound).
 * **Reverse** – Video ▸ Reverse (clips up to 3 minutes).
 * **Transitions** – select a clip, then **Effects ▸ Transition in**: *Fade through black*, *Cross dissolve*, or a *Wipe* in four directions. Put the clip directly after the previous clip on the same track. The transition length is set in Properties.
-* **Titles, subtitles, captions** – **Video ▸ Add title / subtitle / caption** (key **T** for title). Edit the text, size, colour, background box and position in Properties. Right-to-left languages such as Arabic work.
+* **Titles, subtitles, captions** – **Video ▸ Add title / subtitle / caption** (key **T** for title), or **right-click an empty spot on a title track** and choose *Add title / subtitle / caption here* – the new text starts exactly where you clicked. Edit the text (full-width box), size, colours, background box and position in Properties. **Font…** chooses the font type (family, bold, italic from your installed Windows fonts) and **Effects…** adds outline, shadow, ALL CAPITALS and text opacity. Right-to-left languages such as Arabic work.
 * **Watermark / logo** – **Video ▸ Add watermark** places a PNG in the top-right corner of the top video track; change size, position and opacity in Properties.
 * **Picture-in-picture** – select a clip and use **Video ▸ Make picture-in-picture**; it is shrunk into a corner of the top video track and shown over the footage below.
 
@@ -84,11 +84,11 @@ Original audio files are never overwritten. Exports never replace an existing fi
 
 ## 6. Previewing your edit
 
-* **Direct play:** if the timeline holds just one unmodified video clip (trimmed is fine), Space plays the file directly – no rendering at all.
-* **Play (Space)** on the timeline renders a low-resolution preview of the **whole** edit – all tracks, effects, transitions, titles and the audio mix – and then plays it smoothly like a normal video. The first Play after an edit shows "Rendering preview…" with a percentage; after that, Play starts instantly until you change something. If you change something that affects the picture or sound (clips, effects, tracks, mute/solo/hide) while a preview is playing, it stops and the next Play refreshes it. **Markers, track names/heights, locks and the marker colours never trigger a re-render.** **Render preview** (F5) forces a fresh render.
-* **Click or drag anywhere on the blue seek bar** under the picture to jump to that point. Scrubbing the timeline ruler shows the picture at the playhead without rendering.
-* **Live** button (off by default): instant but approximate playback of the top video clip only – no effects, no multi-track mix, and it may stutter at clip boundaries. Use it for quick checks.
-* **Source mode**: double-click a library item. Use **Mark In / Mark Out** to choose a part, then **Add to timeline**.
+* **Live playback (default, no rendering):** press **Space** and the timeline plays immediately while you edit. Cuts between clips are gap-free (the next clip is loaded in advance), the red playhead follows the picture, and **audio, music and voice-over tracks play too** (with their volume, mute and solo). Live playback is *approximate*: colour effects, transitions, rotation/crop and picture-in-picture overlays are not drawn (a small note appears on the picture when your project uses them), the sound of lower video layers is not played, and effects such as EQ or noise reduction are not applied. Titles are shown, including font, outline and shadow.
+* **Render** (button under the picture, or F5): optional. Renders an *exact* low-resolution preview of the whole timeline – every effect, transition, title and the full mix – and plays it. For long projects this takes time, so use it only when you want to check the final look; it never runs by itself in Live mode. **Stop** cancels a render in progress.
+* **Live off:** if you switch the **Live** button off, Play always plays the exact rendered preview (it renders first when the edit has changed). A single unmodified video clip is played directly from the file with no render.
+* **Click or drag anywhere on the blue seek bar** under the picture to jump to that point. Scrubbing the timeline ruler shows the picture at the playhead.
+* **Source mode:** double-click a library item. Use **In / Out** to choose a part, then **Add to timeline**.
 * For very large (4K) files, right-click the item ▸ **Create optimized preview (proxy)**. Previews then use the lighter file; exports always use the original.
 
 ## 7. Saving, autosave and recovery
@@ -138,7 +138,7 @@ While exporting you see a progress bar and the estimated time remaining; **Cance
 
 * **"This file is not supported or is damaged"** – the file is incomplete or in a format FFmpeg cannot read. Try opening it in another player; if it also fails, the file is damaged.
 * **A clip shows "(missing)"** – the file was moved or deleted. Use **File ▸ Relink missing media**.
-* **Titles do not render / "font could not be loaded"** – the title font (Arial Bold) is missing from Windows; install it or set the environment variable `MVEDITOR_FONT` to a .ttf file.
+* **A title uses a different font than I chose** – some fonts (for example font collections .ttc) cannot be used by the renderer and fall back to the default bold font. Choose another font. **Titles do not render / "font could not be loaded"** – install Arial or set the environment variable `MVEDITOR_FONT` to a .ttf file.
 * **H.264/H.265 is greyed out** – this copy uses the LGPL FFmpeg flavor without x264/x265. Use WebM, a hardware encoder, or the full (GPL) edition.
 * **Hardware encoder message** – not every PC has NVENC/QSV/AMF; the app falls back to software automatically.
 * **Microphone not found** – check *Settings ▸ Privacy & security ▸ Microphone* and that a device is plugged in.
@@ -148,7 +148,7 @@ While exporting you see a progress bar and the estimated time remaining; **Cance
 
 ## 11. Known limits
 
-* Playing a never-rendered or edited timeline first renders the preview (time depends on the length of the project). The **Live** mode is instant but only approximate.
+* Live playback is instant but approximate (see section 6). Use **Render** to see the exact result before exporting.
 * **Reverse** is limited to clips of 3 minutes (the clip is held in memory).
 * Transitions blend a clip into the footage that is already there. For "cross-dissolve between two clips" the first clip's last frame is held during the transition.
 * Subtitles are typed in as caption clips; importing .srt files is not included in this version.

@@ -54,6 +54,9 @@ QJsonObject TitleSpec::toJson() const {
     QJsonObject o;
     o["text"] = text; o["fontSize"] = fontSize; o["color"] = color; o["box"] = box;
     o["boxColor"] = boxColor; o["boxOpacity"] = boxOpacity; o["posX"] = posX; o["posY"] = posY; o["kind"] = kind;
+    o["fontFamily"] = fontFamily; o["bold"] = bold; o["italic"] = italic; o["caps"] = caps; o["textOpacity"] = textOpacity;
+    o["outline"] = outline; o["outlineWidth"] = outlineWidth; o["outlineColor"] = outlineColor;
+    o["shadow"] = shadow; o["shadowX"] = shadowX; o["shadowY"] = shadowY; o["shadowColor"] = shadowColor; o["shadowOpacity"] = shadowOpacity;
     return o;
 }
 TitleSpec TitleSpec::fromJson(const QJsonObject &o) {
@@ -62,6 +65,10 @@ TitleSpec TitleSpec::fromJson(const QJsonObject &o) {
     t.color = o["color"].toString(t.color); t.box = o["box"].toBool(t.box);
     t.boxColor = o["boxColor"].toString(t.boxColor); t.boxOpacity = o["boxOpacity"].toDouble(t.boxOpacity);
     t.posX = o["posX"].toDouble(t.posX); t.posY = o["posY"].toDouble(t.posY); t.kind = o["kind"].toString(t.kind);
+    t.fontFamily = o["fontFamily"].toString(); t.bold = o["bold"].toBool(true); t.italic = o["italic"].toBool(false); t.caps = o["caps"].toBool(false);
+    t.textOpacity = o["textOpacity"].toDouble(1.0); t.outline = o["outline"].toBool(false); t.outlineWidth = o["outlineWidth"].toDouble(3);
+    t.outlineColor = o["outlineColor"].toString(t.outlineColor); t.shadow = o["shadow"].toBool(false); t.shadowX = o["shadowX"].toDouble(3);
+    t.shadowY = o["shadowY"].toDouble(3); t.shadowColor = o["shadowColor"].toString(t.shadowColor); t.shadowOpacity = o["shadowOpacity"].toDouble(0.7);
     return t;
 }
 

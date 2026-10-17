@@ -1,4 +1,5 @@
-// Preview monitor: source viewing, smooth rendered timeline preview, optional fast "live" approximation.
+// Preview monitor: source viewing, smooth LIVE timeline playback (double-buffered video + audio tracks),
+// optional exact rendered preview and direct play of a single clip.
 #pragma once
 #include "ProjectModel.h"
 #include <QAudioOutput>
@@ -52,7 +53,6 @@ public:
     explicit PreviewMonitor(ProjectModel *model, QWidget *parent = nullptr);
     void playSource(const QString &mediaId);
     void playRendered(const QString &path, double startSeconds, bool autoplay);
-    // Plays a single unmodified clip straight from its source file (no render needed). in/out in seconds of the source.
     void playDirect(const QString &path, double in, double out, double startOnTimeline, bool autoplay);
     void togglePlay();
     void pause();
@@ -60,22 +60,43 @@ public:
     void stepFrame(int dir);
     bool isPlaying() const;
     Mode mode() const { return m_mode; }
+    bool liveEnabled() const { return m_live->isChecked(); }
     void releaseMedia();
-    void showBusy(const QString &text);           // text drawn over the picture (empty = hide)
+    void showBusy(const QString &text);
 signals:
     void renderPreviewRequested();
-    void timelinePlayRequested();
+    void timelinePlayRequested();      // Live is off: the main window renders / plays an exact preview
+    void stopPressed();
     void addToTimelineRequested(const QString &mediaId, double in, double out);
     void message(const QString &text);
 protected:
     void resizeEvent(QResizeEvent *) override;
     void showEvent(QShowEvent *) override;
 private:
-    struct Pending { bool valid = false; qint64 posMs = 0; bool play = false; };
+    struct Pending { bool valid = false; qint64 posMs = 0; bool play = false; double rate = 1.0, vol = 1.0; };
+    struct Preload { QMediaPlayer *pl = nullptr; QAudioOutput *ao = nullptr; QGraphicsVideoItem *vi = nullptr;
+                     QString clipId, path; Pending pend; bool loaded = false; qint64 lastPos = 0; };
+    struct Voice { QMediaPlayer *pl = nullptr; QAudioOutput *ao = nullptr; QString clipId, path; Pending pend; bool loaded = false; };
+
+    void wire(QMediaPlayer *pl);
+    void onPosition(QMediaPlayer *pl, qint64 pos);
+    void onState(QMediaPlayer *pl, QMediaPlayer::PlaybackState s);
+    void onStatus(QMediaPlayer *pl, QMediaPlayer::MediaStatus st);
     void setMode(Mode m);
     void setCanvas(int w, int h);
     void fit();
+    // live engine
     void syncTo(double t, bool play);
+    double liveTime();
+    void loadActive(const Clip &c, const MediaItem &mi, qint64 target, bool play, double rate, double vol);
+    void keepPlaying(qint64 target);
+    void preloadDeck(const Clip &c);
+    void swapDecks();
+    void syncVoices(double t, bool play);
+    void ensureVoices();
+    void releaseLive();
+    const Clip *nextVideoClip(double after) const;
+    void updateLiveNote();
     void applyToPlayer(qint64 posMs, bool play, double rate, double vol);
     void updateTitles(double t);
     void tick();
@@ -91,12 +112,16 @@ private:
     QGraphicsScene *m_scene;
     QGraphicsView *m_view;
     QGraphicsRectItem *m_canvas;
-    QGraphicsVideoItem *m_video;
+    QGraphicsVideoItem *m_video;                 // the ACTIVE deck's picture
     QGraphicsPixmapItem *m_image;
-    QGraphicsSimpleTextItem *m_busy;
+    QGraphicsSimpleTextItem *m_busy, *m_note;
     QVector<QGraphicsItem *> m_titleItems;
-    QMediaPlayer *m_player;
+    QString m_titleKey;
+    QMediaPlayer *m_player;                      // the ACTIVE deck's player (swapped with m_pre on gap-free cuts)
     QAudioOutput *m_audio;
+    Preload m_pre;                               // the second deck: preloads the next clip
+    QVector<Voice> m_voices;                     // audio-track players (audio, music, voice-over)
+    QString m_activeClipId;
     SeekSlider *m_slider;
     QLabel *m_time, *m_modeLabel;
     QToolButton *m_play, *m_srcBtn, *m_tlBtn, *m_live;
@@ -106,7 +131,7 @@ private:
     Mode m_mode = Mode::Timeline;
     bool m_tlPlaying = false, m_sliderDrag = false;
     double m_t0 = 0;
-    qint64 m_lastReported = 0, m_offsetMs = 0, m_endMs = 0;   // rendered/direct playback window inside the player file
+    qint64 m_lastReported = 0, m_offsetMs = 0, m_endMs = 0, m_lastLiveMs = 0;
     QByteArray m_renderedSig;
     QString m_loadedPath, m_sourceId;
     Pending m_pending;

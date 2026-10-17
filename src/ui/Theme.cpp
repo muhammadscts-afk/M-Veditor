@@ -63,7 +63,16 @@ void Theme::apply(bool dark) {
     tp.setColor(QPalette::ToolTipBase, QColor(46, 48, 54)); tp.setColor(QPalette::ToolTipText, Qt::white);
     tp.setColor(QPalette::Window, QColor(46, 48, 54)); tp.setColor(QPalette::WindowText, Qt::white);
     QToolTip::setPalette(tp);
-    qApp->setStyleSheet(
+    const QString menuCss = QString(
+        "QMenu { background-color: %1; border: 1px solid %2; padding: 3px; }"
+        "QMenu::item { padding: 5px 30px 5px 24px; color: %3; background: transparent; }"
+        "QMenu::item:selected { background-color: #2d6fd6; color: #ffffff; }"
+        "QMenu::item:disabled { color: %4; }"
+        "QMenu::separator { height: 1px; background: %2; margin: 4px 8px; }"
+        "QMenuBar { background-color: %1; } QMenuBar::item { padding: 4px 10px; background: transparent; color: %3; }"
+        "QMenuBar::item:selected { background-color: #2d6fd6; color: #ffffff; }")
+        .arg(Theme::panel().name(), Theme::grid().name(), Theme::text().name(), Theme::dim().name());
+    qApp->setStyleSheet(menuCss +
         "QToolTip { background-color: #2e3036; color: #ffffff; border: 1px solid #7a7d88; padding: 5px 8px; font-size: 9pt; }"
         "QDockWidget::title { padding: 5px; font-weight: bold; }"
         "QToolButton { padding: 4px; }"
@@ -71,6 +80,7 @@ void Theme::apply(bool dark) {
         "QPushButton#primary:disabled { background: #5c6b82; color: #ccd; }"
         "QPushButton#primary:hover { background: #4a93ff; }"
         "QGroupBox { margin-top: 10px; font-weight: bold; } QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; }");
+    { QFont f = qApp->font(); f.setHintingPreference(QFont::PreferFullHinting); f.setStyleStrategy(QFont::PreferAntialias); qApp->setFont(f); }
 }
 
 QColor Theme::bg() { return g_dark ? QColor(24, 25, 28) : QColor(226, 228, 232); }

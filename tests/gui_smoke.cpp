@@ -12,7 +12,10 @@
 #include <QProcess>
 #include <QTemporaryDir>
 #include <QMenu>
+#include <QMenuBar>
 #include <QTest>
+#include <QDockWidget>
+#include <QLabel>
 #include <QToolButton>
 #include <QToolTip>
 #include <QTimer>
@@ -160,9 +163,13 @@ int main(int argc, char **argv) {
             QTest::mouseClick(slider, Qt::LeftButton, Qt::NoModifier, QPoint(12, slider->height() / 2));
             CHECK(m->playhead() < dur * 0.1, "click near the start jumps near the start");
         }
+        QToolButton *liveBtn = nullptr;
+        if (prev) for (auto *b : prev->findChildren<QToolButton *>()) if (b->text() == "Live") liveBtn = b;
+        CHECK(liveBtn && liveBtn->isChecked(), "Live preview is ON by default (no rendering needed to play)");
+        if (liveBtn) liveBtn->setChecked(false);                 // exact-preview flow below
         if (prev) {
             m->setPlayhead(0.5);
-            prev->togglePlay();       // Timeline mode: renders a full preview, then plays it
+            prev->togglePlay();       // Live off: renders a full preview, then plays it
             CHECK(waitFor([&] { return prev->mode() == PreviewMonitor::Mode::Rendered; }, 120000), "Play renders the full preview and switches to the rendered player");
             QTest::qWait(300);
             m->mutate("marker during preview", [&](Project &p) { p.markers.push_back({1.0, "x"}); });
@@ -175,6 +182,34 @@ int main(int argc, char **argv) {
             m->undoStack()->undo(); m->undoStack()->undo(); m->undoStack()->undo();
         }
     }
+    std::cout << "- live playback: no rendering, playhead advances smoothly, panels start narrow" << std::endl;
+    {
+        auto *prev = w.findChild<PreviewMonitor *>();
+        QToolButton *lb = nullptr; for (auto *b : prev->findChildren<QToolButton *>()) if (b->text() == "Live") lb = b;
+        if (lb) lb->setChecked(true);
+        prev->pause();
+        m->setPlayhead(1.0);
+        QTest::qWait(200);
+        prev->togglePlay();
+        CHECK(prev->isPlaying() && prev->mode() == PreviewMonitor::Mode::Timeline && !w.busy(), "Space starts live playback instantly without any render job");
+        QVector<double> samples;
+        for (int i = 0; i < 12; ++i) { QTest::qWait(50); samples << m->playhead(); }
+        prev->pause();
+        bool monotonic = true; for (int i = 1; i < samples.size(); ++i) if (samples[i] < samples[i - 1] - 1e-9) monotonic = false;
+        int distinct = 1; for (int i = 1; i < samples.size(); ++i) if (samples[i] > samples[i - 1] + 1e-6) ++distinct;
+        CHECK(monotonic && samples.last() > 1.3 && samples.last() < 2.6, QString("playhead advances in real time (1.0 -> %1 s in ~0.6 s)").arg(samples.last()));
+        CHECK(distinct >= 8, QString("playhead moves on almost every 50 ms sample (%1 of 12 distinct) = smooth").arg(distinct));
+        m->mutate("marker while idle", [](Project &p) { p.markers.push_back({0.2, "z"}); });
+        m->undoStack()->undo();
+        auto *dp = w.findChild<QDockWidget *>("dockProps"); auto *dl = w.findChild<QDockWidget *>("dockLib");
+        if (qEnvironmentVariableIsSet("MV_DEBUG_W")) for (const char *nm : {"dockProps", "dockExport"}) {
+            auto *d = w.findChild<QDockWidget *>(nm); if (!d) continue;
+            std::cout << nm << " minSizeHint=" << d->minimumSizeHint().width() << " widget=" << d->widget()->minimumSizeHint().width() << std::endl;
+            for (auto *c : d->widget()->findChildren<QWidget *>()) if (c->minimumSizeHint().width() > 140 && c->isVisibleTo(d->widget()))
+                std::cout << "   " << c->metaObject()->className() << " '" << c->objectName().toStdString() << "' min=" << c->minimumSizeHint().width() << " text=" << (qobject_cast<QLabel*>(c) ? qobject_cast<QLabel*>(c)->text().left(30).toStdString() : std::string()) << std::endl;
+        }
+        CHECK(dp && dl && dp->width() <= 260 && dl->width() <= 230, QString("docks start at (near) their minimum width: props %1, library %2").arg(dp ? dp->width() : -1).arg(dl ? dl->width() : -1));
+    }
     std::cout << "- direct play of a single clip (no render)" << std::endl;
     {
         auto *prev = w.findChild<PreviewMonitor *>();
@@ -186,6 +221,9 @@ int main(int argc, char **argv) {
         QString v1id; for (auto &t : single.tracks) if (t.name == "Video 1") v1id = t.id;
         single.clips[0].trackId = v1id;
         m->reset(single, QString());
+        QToolButton *liveBtn2 = nullptr;
+        for (auto *b : prev->findChildren<QToolButton *>()) if (b->text() == "Live") liveBtn2 = b;
+        if (liveBtn2) liveBtn2->setChecked(false);
         QElapsedTimer tm; tm.start();
         prev->togglePlay();
         CHECK(prev->mode() == PreviewMonitor::Mode::Rendered && !w.busy() && tm.elapsed() < 3000, QString("single clip plays directly without rendering (%1 ms)").arg(tm.elapsed()));
@@ -194,6 +232,7 @@ int main(int argc, char **argv) {
         m->mutate("fx", [](Project &p) { p.clips[0].fx.saturation = 1.5; });
         CHECK(prev->mode() == PreviewMonitor::Mode::Timeline, "an effect on the clip leaves direct mode");
         prev->pause();
+        if (liveBtn2) liveBtn2->setChecked(true);
         m->reset(saved, keepPath);
     }
     std::cout << "- marker colour regions" << std::endl;
@@ -244,6 +283,12 @@ int main(int argc, char **argv) {
             tip->grab().save("/tmp/mveditor_tip.png");
         }
         QToolTip::hideText();
+    }
+    {   // visual references: title panel and an open menu
+        QString titleId; for (auto &c : m->project().clips) if (c.isTitle()) titleId = c.id;
+        if (!titleId.isEmpty()) { m->selectClip(titleId); QTest::qWait(300); w.grab().save("/tmp/mveditor_title.png"); }
+        QMenu *vm = nullptr; for (auto *mn : w.menuBar()->findChildren<QMenu *>()) if (mn->title().contains("Video")) vm = mn;
+        if (vm) { vm->popup(w.mapToGlobal(QPoint(300, 60))); QTest::qWait(300); vm->grab().save("/tmp/mveditor_menu.png"); vm->close(); }
     }
     std::cout << "- screenshot" << std::endl;
     w.timeline()->zoomFit();

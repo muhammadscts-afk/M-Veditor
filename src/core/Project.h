@@ -39,6 +39,11 @@ struct TitleSpec {
     double boxOpacity = 0.5;
     double posX = 0.5, posY = 0.85;     // 0..1 position of the text box
     QString kind = QStringLiteral("title"); // title | subtitle | caption
+    QString fontFamily;                 // empty = default bold sans-serif
+    bool bold = true, italic = false, caps = false;
+    double textOpacity = 1.0;
+    bool outline = false; double outlineWidth = 3; QString outlineColor = QStringLiteral("#000000");   // px at 1080p
+    bool shadow = false; double shadowX = 3, shadowY = 3; QString shadowColor = QStringLiteral("#000000"); double shadowOpacity = 0.7;
     QJsonObject toJson() const;
     static TitleSpec fromJson(const QJsonObject &o);
 };

@@ -1,6 +1,7 @@
 #include <functional>
 #include "RenderGraph.h"
 #include "FfmpegTools.h"
+#include "FontResolver.h"
 #include <QColor>
 #include <QFileInfo>
 #include <algorithm>
@@ -225,13 +226,18 @@ RenderPlan RenderGraph::build(const Project &p, const ExportOptions &o, bool all
                 // ---------------- titles
                 if (c.isTitle()) {
                     const QString fn = QString("title_%1.txt").arg(titleN++);
-                    plan.files.push_back({fn, c.title.text.toUtf8()});
+                    plan.files.push_back({fn, (c.title.caps ? c.title.text.toUpper() : c.title.text).toUtf8()});
                     const double fs = std::max(8.0, c.title.fontSize * H / 1080.0);
                     const int bw = c.title.box ? int(fs * 0.3) : 0;
                     QString dt = QString("drawtext=textfile=%1:expansion=none:fontsize=%2:fontcolor=%3")
-                                     .arg(fn, num(fs), fcolor(c.title.color));
-                    const QString font = !o.fontFile.isEmpty() ? o.fontFile : defaultFontFile();
+                                     .arg(fn, num(fs), fcolor(c.title.color, c.title.textOpacity));
+                    QString font = o.fontFile;
+                    if (font.isEmpty()) font = resolveFontFile(c.title.fontFamily, c.title.bold, c.title.italic);
+                    if (font.isEmpty()) font = defaultFontFile();
                     if (QFileInfo::exists(font)) dt += ":fontfile=" + fpath(font);
+                    const double sc = H / 1080.0;
+                    if (c.title.outline) dt += QString(":borderw=%1:bordercolor=%2").arg(std::max<long>(1, std::lround(c.title.outlineWidth * sc))).arg(fcolor(c.title.outlineColor));
+                    if (c.title.shadow) dt += QString(":shadowx=%1:shadowy=%2:shadowcolor=%3").arg(std::lround(c.title.shadowX * sc)).arg(std::lround(c.title.shadowY * sc)).arg(fcolor(c.title.shadowColor, c.title.shadowOpacity));
                     dt += QString(":x=(w-text_w-%1)*%2+%3:y=(h-text_h-%1)*%4+%5")
                               .arg(2 * bw).arg(num(c.title.posX)).arg(bw).arg(num(c.title.posY)).arg(bw);
                     if (c.title.box) dt += QString(":box=1:boxcolor=%1:boxborderw=%2").arg(fcolor(c.title.boxColor, c.title.boxOpacity)).arg(bw);

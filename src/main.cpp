@@ -78,6 +78,8 @@ int main(int argc, char **argv) {
     cli.addOption(selftest); cli.addOption(grab);
     cli.process(app);
 
+    for (auto e : {Qt::UI_AnimateMenu, Qt::UI_FadeMenu, Qt::UI_AnimateCombo, Qt::UI_AnimateTooltip, Qt::UI_FadeTooltip})
+        QApplication::setEffectEnabled(e, false);
     tools::setOverrideDir(AppSettings::ffmpegDir());
     WaveformCache::setCacheDir(AppSettings::cacheDir());
     if (cli.isSet(selftest)) return selfTest();

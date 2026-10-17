@@ -29,6 +29,7 @@ signals:
     void trackContextMenu(const QString &trackId, const QPoint &globalPos);
     void rulerContextMenu(double time, const QPoint &globalPos);
     void addTrackRequested(int trackType);
+    void laneContextMenu(const QString &trackId, double time, const QPoint &globalPos);   // right-click on an empty part of a track
     void message(const QString &text);
 
 protected:

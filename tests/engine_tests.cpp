@@ -2,6 +2,7 @@
 #include "AudioAnalysis.h"
 #include "ExportJob.h"
 #include "FfmpegTools.h"
+#include "FontResolver.h"
 #include "MediaProbe.h"
 #include "RenderGraph.h"
 #include <QCoreApplication>
@@ -254,6 +255,28 @@ int main(int argc, char **argv) {
         Project d = mk(); d.trackById(trackA)->solo = true;      // soloing an AUDIO track must not blank the picture
         auto rd = render(d, opts("mp4-h264", "solo_audio_picture.mp4"));
         CHECK(rd.ok && near(lumaAt(P("solo_audio_picture.mp4"), 1.0), 57, 10), QString("soloing an audio track keeps the picture"));
+    }
+
+    section("title fonts and effects (family/bold/italic, outline, shadow, caps, opacity)");
+    {
+        const QString f1 = resolveFontFile("DejaVu Sans", true, false), f2 = resolveFontFile("DejaVu Sans", false, true);
+#ifndef Q_OS_WIN
+        CHECK(!f1.isEmpty() && !f2.isEmpty() && f1 != f2, QString("font lookup finds different files for bold / italic: %1 | %2").arg(f1, f2));
+#endif
+        CHECK(resolveFontFile("", true, false).isEmpty(), QString("empty family means default font"));
+        Project p = newProject(v1); clip(p, v1, trackV1, 0, 0, 2);
+        Clip t; t.id = newId("c"); t.trackId = trackT; t.start = 0; t.in = 0; t.out = 2; t.title.text = "Styled title";
+        t.title.fontFamily = "DejaVu Sans"; t.title.bold = true; t.title.italic = true; t.title.caps = true; t.title.textOpacity = 0.9;
+        t.title.outline = true; t.title.outlineWidth = 4; t.title.outlineColor = "#ff0000"; t.title.shadow = true; t.title.shadowColor = "#0000ff";
+        t.title.fontSize = 120; t.title.posY = 0.5; t.title.box = false; p.clips.push_back(t);
+        auto r = render(p, opts("mp4-h264", "title_fx.mp4"));
+        CHECK(r.ok && near(r.out.item.duration, 2.0, 0.2), QString("styled title renders: %1").arg(r.msg));
+        Project q = newProject(v1); clip(q, v1, trackV1, 0, 0, 2);   // same without text: the picture must differ where the text is
+        auto r2 = render(q, opts("mp4-h264", "title_none.mp4"));
+        const double a = lumaAt(P("title_fx.mp4"), 1.0, "iw/2:ih/6:iw/4:ih*5/12"), b = lumaAt(P("title_none.mp4"), 1.0, "iw/2:ih/6:iw/4:ih*5/12");
+        CHECK(r2.ok && std::fabs(a - b) > 1.0, QString("title text is visible in the picture (luma %1 vs %2)").arg(a).arg(b));
+        QJsonObject j = t.toJson(); Clip back = Clip::fromJson(j);
+        CHECK(back.title.italic && back.title.outline && back.title.caps && back.title.fontFamily == "DejaVu Sans" && back.title.shadow, QString("title style survives save/load"));
     }
 
     section("render signature ignores markers/names, reacts to real edits");
