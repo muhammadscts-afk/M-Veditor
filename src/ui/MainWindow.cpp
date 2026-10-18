@@ -74,30 +74,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     connect(m_tl, &TimelineView::clipContextMenu, this, &MainWindow::showClipMenu);
     connect(m_tl, &TimelineView::trackContextMenu, this, &MainWindow::showTrackMenu);
     connect(m_tl, &TimelineView::message, this, [this](const QString &t) { notify(t); });
-    connect(m_tl, &TimelineView::rulerContextMenu, this, [this](double t, const QPoint &gp) {
-        QMenu menu(this);
-        menu.addAction(tr("Add marker here"), [this, t] { addMarker(t); });
-        menu.addAction(tr("Delete nearest marker"), [this, t] {
-            int best = -1; double bd = 1e9; const auto &mk = m->project().markers;
-            for (int i = 0; i < mk.size(); ++i) if (std::fabs(mk[i].time - t) < bd) { bd = std::fabs(mk[i].time - t); best = i; }
-            if (best >= 0) m->mutate(tr("Delete marker"), [best](Project &p) { p.markers.removeAt(best); });
-        });
-        menu.addAction(tr("Rename nearest marker…"), [this, t] {
-            int best = -1; double bd = 1e9; const auto &mk = m->project().markers;
-            for (int i = 0; i < mk.size(); ++i) if (std::fabs(mk[i].time - t) < bd) { bd = std::fabs(mk[i].time - t); best = i; }
-            if (best < 0) return;
-            bool ok; QString n = QInputDialog::getText(this, tr("Marker"), tr("Name:"), QLineEdit::Normal, mk[best].name, &ok);
-            if (ok) m->mutate(tr("Rename marker"), [best, n](Project &p) { p.markers[best].name = n; });
-        });
-        menu.addAction(tr("Change colour of the region after the nearest marker…"), [this, t] {
-            int best = -1; double bd = 1e9; const auto &mk = m->project().markers;
-            for (int i = 0; i < mk.size(); ++i) if (std::fabs(mk[i].time - t) < bd) { bd = std::fabs(mk[i].time - t); best = i; }
-            if (best < 0) return;
-            const QColor col = QColorDialog::getColor(QColor(mk[best].color.isEmpty() ? "#4285f4" : mk[best].color), this, tr("Region colour"));
-            if (col.isValid()) m->mutate(tr("Marker colour"), [best, col](Project &p) { p.markers[best].color = col.name(); });
-        });
-        menu.exec(gp);
-    });
+    connect(m_tl, &TimelineView::rulerContextMenu, this, [this](double t, const QPoint &gp) { showMarkerMenu(-1, t, gp); });
+    connect(m_tl, &TimelineView::markerContextMenu, this, [this](int idx, const QPoint &gp) { showMarkerMenu(idx, m->project().markers[idx].time, gp); });
     connect(m_lib, &MediaLibrary::importRequested, a["import"], &QAction::trigger);
     connect(m_lib, &MediaLibrary::filesDropped, this, &MainWindow::importFiles);
     connect(m_lib, &MediaLibrary::removeRequested, this, &MainWindow::removeMedia);
@@ -131,7 +109,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
             menu.addSeparator();
         }
         menu.addAction(tr("Paste here"), [this, t] { pasteClip(t); })->setEnabled(!m_clipboard.isEmpty());
-        menu.addAction(tr("Add marker here"), [this, t] { addMarker(t); });
+        menu.addAction(tr("Add marker here"), [this, t, trackId] { addMarker(t, trackId); });
         menu.exec(gp);
     });
     connect(m_prev, &PreviewMonitor::stopPressed, this, [this] { if (busy() && m_kind == JobKind::Preview) m_job->cancel(); });
@@ -828,6 +806,20 @@ void MainWindow::tidyTrack(Project &p, const QString &trackId) {      // push cl
     }
 }
 
+namespace {
+struct SpeedAnchor { QString clipId; double src = 0; bool valid = false; };
+// The selected clip that is under the playhead (the main one first) and the source frame the playhead is on.
+SpeedAnchor captureAnchor(const Project &p, const QStringList &ids, const QString &primary, double ph) {
+    SpeedAnchor a;
+    QStringList order = ids; order.removeAll(primary); order.prepend(primary);
+    for (const QString &id : order) {
+        const Clip *c = p.clipById(id);
+        if (c && !c->isTitle() && ph >= c->start - 1e-6 && ph <= c->end() + 1e-6) { a.clipId = id; a.src = c->in + (ph - c->start) * c->fx.speed; a.valid = true; break; }
+    }
+    return a;
+}
+}
+
 void MainWindow::stepSpeed(int dir) {
     const QStringList ids = m->selectedClips();
     const Clip *c = m->project().clipById(m->selectedClip());
@@ -836,10 +828,8 @@ void MainWindow::stepSpeed(int dir) {
     if (!mi || mi->kind == "image") { notify(tr("Titles and still images don't have a speed.")); return; }
     const double ns = std::clamp(std::round((c->fx.speed + dir * 0.1) * 10.0) / 10.0, 0.1, 100.0);
     if (std::fabs(ns - c->fx.speed) < 1e-9) { notify(tr("The speed is already at its limit (%1×).").arg(ns)); return; }
-    const double ph = m->playhead();
-    const bool inside = ph >= c->start - 1e-6 && ph <= c->end() + 1e-6;
-    const double srcMoment = c->in + (ph - c->start) * c->fx.speed;             // keep the playhead on the same frame
     const QString primary = c->id;
+    const SpeedAnchor anchor = captureAnchor(m->project(), ids, primary, m->playhead());
     m->mutate(tr("Change speed"), [&](Project &p) {
         QStringList tracks;
         for (const QString &id : ids) {
@@ -848,8 +838,10 @@ void MainWindow::stepSpeed(int dir) {
             x->fx.speed = ns; if (!tracks.contains(x->trackId)) tracks << x->trackId;
         }
         for (const QString &t : tracks) tidyTrack(p, t);
-    }, "speed-step");                                                              // many key presses = one undo step
-    if (inside) if (const Clip *pc = m->project().clipById(primary)) m->setPlayhead(pc->start + (srcMoment - pc->in) / std::max(0.01, pc->fx.speed));
+        if (anchor.valid) if (const Clip *ac = p.clipById(anchor.clipId))             // move the playhead BEFORE the preview reacts: it then seeks only once, to the same frame
+            m->setPlayheadQuiet(ac->start + (anchor.src - ac->in) / std::max(0.01, ac->fx.speed));
+    }, "speed-step");                                                                // many key presses = one undo step
+    if (anchor.valid) m->notifyPlayhead();
     notify(tr("Speed %1×").arg(QString::number(ns, 'f', 1)));
 }
 
@@ -892,9 +884,7 @@ void MainWindow::applySpeedDialog() {
     const QStringList ids = m->selectedClips();
     const QString audioTrack = m->project().firstTrackOfType(TrackType::Audio);
     if (mode == SpeedDialog::DetachAudio && audioTrack.isEmpty()) { notify(tr("There is no audio track to detach to."), true); return; }
-    const double phBefore = m->playhead();
-    const bool phInside = phBefore >= c->start - 1e-6 && phBefore <= c->end() + 1e-6;
-    const double srcMoment = c->in + (phBefore - c->start) * c->fx.speed;       // the frame the playhead is on
+    const SpeedAnchor anchor = captureAnchor(m->project(), ids, primary, m->playhead());
     int applied = 0;
     m->mutate(tr("Change speed"), [&](Project &p) {
         QStringList tracks;
@@ -912,9 +902,10 @@ void MainWindow::applySpeedDialog() {
             ++applied;
         }
         for (const QString &t : tracks) tidyTrack(p, t);
+        if (anchor.valid) if (const Clip *ac = p.clipById(anchor.clipId))             // stay on the same frame instead of jumping forward/back
+            m->setPlayheadQuiet(ac->start + (anchor.src - ac->in) / std::max(0.01, ac->fx.speed));
     });
-    if (const Clip *pc = m->project().clipById(primary)) if (phInside)       // stay on the same frame instead of jumping forward/back
-        m->setPlayhead(pc->start + (srcMoment - pc->in) / std::max(0.01, pc->fx.speed));
+    if (anchor.valid) m->notifyPlayhead();
     if (const Clip *pc = m->project().clipById(primary))
         notify(tr("Speed set to %1× on %2 clip(s) – the clip is now %3 long.").arg(QString::number(s, 'g', 4)).arg(applied).arg(humanTime(pc->duration(), true)));
 }
@@ -1074,10 +1065,61 @@ void MainWindow::showClipMenu(const QString &id, const QPoint &gp) {
     menu.exec(gp);
 }
 
-void MainWindow::addMarker(double t) {
-    const int n = m->project().markers.size() + 1;
-    m->mutate(tr("Add marker"), [t, n](Project &p) { p.markers.push_back({t, QString("M%1").arg(n)}); });
+void MainWindow::addMarker(double t, const QString &trackId) {
+    const QString tid = trackId.isEmpty() ? m->activeTrack() : trackId;
+    if (tid.isEmpty()) { notify(tr("Click a track first, then add a marker.")); return; }
+    m->mutate(tr("Add marker"), [t, tid](Project &p) { Marker mk; mk.time = t; mk.trackId = tid; p.markers.push_back(mk); });
+    int idx = -1; for (int i = 0; i < m->project().markers.size(); ++i) if (std::fabs(m->project().markers[i].time - t) < 1e-9 && m->project().markerTrack(m->project().markers[i]) == tid) idx = i;
+    const Track *trk = m->project().trackById(tid);
+    notify(tr("Marker %1 added on %2. Markers work in pairs (Ma, Mp): the area between them is tinted.").arg(m->project().markerLabel(idx), trk ? trk->name : QString()));
 }
+
+void MainWindow::setPairColor(int mi, const QString &color) {
+    const Project &p = m->project();
+    if (mi < 0 || mi >= p.markers.size()) return;
+    const QVector<int> idx = p.markerIndexesOnTrack(p.markerTrack(p.markers[mi]));
+    const int pos = idx.indexOf(mi);
+    const int first = idx[pos - pos % 2];                                    // the colour lives on the first marker (Ma) of the pair
+    m->mutate(tr("Marker colour"), [first, color](Project &pr) { if (first < pr.markers.size()) pr.markers[first].color = color; });
+}
+
+void MainWindow::showMarkerMenu(int mi, double time, const QPoint &gp) {
+    const Project &p = m->project();
+    const QString tid = mi >= 0 ? p.markerTrack(p.markers[mi]) : m->activeTrack();
+    const Track *trk = p.trackById(tid);
+    if (mi < 0) {                                                            // ruler: the nearest marker of the active track
+        double bd = 1e18;
+        for (int i : p.markerIndexesOnTrack(tid)) if (std::fabs(p.markers[i].time - time) < bd) { bd = std::fabs(p.markers[i].time - time); mi = i; }
+    }
+    QMenu menu(this);
+    menu.addAction(tr("Add marker here (%1)").arg(trk ? trk->name : tr("no track")), [this, time, tid] { addMarker(time, tid); });
+    if (mi >= 0) {
+        menu.addSeparator();
+        menu.addAction(tr("Marker %1 – %2").arg(p.markerLabel(mi), humanTime(p.markers[mi].time, true)))->setEnabled(false);
+        menu.addAction(tr("Rename…"), [this, mi] {
+            if (mi >= m->project().markers.size()) return;
+            bool ok; const QString n = QInputDialog::getText(this, tr("Marker"), tr("Name (leave empty for Ma / Mp):"), QLineEdit::Normal, m->project().markers[mi].name, &ok);
+            if (ok) m->mutate(tr("Rename marker"), [mi, n](Project &pr) { if (mi < pr.markers.size()) pr.markers[mi].name = n.trimmed(); });
+        });
+        menu.addAction(tr("Delete marker"), [this, mi] { m->mutate(tr("Delete marker"), [mi](Project &pr) { if (mi < pr.markers.size()) pr.markers.removeAt(mi); }); });
+        menu.addSeparator();
+        menu.addAction(tr("Colour between this pair of markers:"))->setEnabled(false);
+        struct C { const char *name; const char *hex; };
+        for (const C &c : {C{"Bright green", "#39ff14"}, C{"Bright yellow", "#ffee00"}, C{"Bright orange", "#ff9100"}, C{"Bright light blue", "#9fe8ff"},
+                           C{"Pink", "#ff6ec7"}, C{"Violet", "#b388ff"}, C{"Red", "#ff5252"}}) {
+            QPixmap pm(16, 16); pm.fill(QColor(c.hex));
+            const QString hex = c.hex;
+            menu.addAction(QIcon(pm), tr(c.name), [this, mi, hex] { setPairColor(mi, hex); });
+        }
+        menu.addAction(tr("Other colour…"), [this, mi] {
+            const QColor col = QColorDialog::getColor(Qt::white, this, tr("Colour between the markers"));
+            if (col.isValid()) setPairColor(mi, col.name());
+        });
+        menu.addAction(tr("Automatic colour"), [this, mi] { setPairColor(mi, QString()); });
+    }
+    menu.exec(gp);
+}
+
 void MainWindow::jumpEdge(int dir) {
     QVector<double> pts = {0.0};
     for (auto &c : m->project().clips) { pts << c.start << c.end(); }

@@ -100,7 +100,8 @@ struct Track {
 struct Marker {
     double time = 0;
     QString name;
-    QString color;                      // optional "#rrggbb" tint of the region that starts at this marker
+    QString color;                      // optional "#rrggbb": tint of the pair that starts at this marker (set on the first marker "Ma" of a pair)
+    QString trackId;                    // the track this marker belongs to (empty = the first video track)
 };
 
 struct ProjectSettings {
@@ -135,6 +136,10 @@ public:
     QByteArray renderSignature() const;
     bool trackVisible(const Track &t) const;
     int usageCount(const QString &mediaId) const;
+    // Markers belong to one track each. They are sorted by time and used in pairs: 1st+2nd, 3rd+4th, ... (Ma, Mp, Ma, Mp ...).
+    QString markerTrack(const Marker &m) const;
+    QVector<int> markerIndexesOnTrack(const QString &trackId) const;
+    QString markerLabel(int index) const;            // custom name or "Ma" / "Mp"
 
     void ensureDefaultTracks();
     // Nearest free start so [start, start+dur) doesn't overlap other clips on the track.

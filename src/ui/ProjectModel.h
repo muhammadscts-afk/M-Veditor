@@ -38,6 +38,10 @@ public:
     QString selectedMedia() const { return m_selMedia; }
     void selectMedia(const QString &id);
     double playhead() const { return m_playhead; }
+    void setPlayheadQuiet(double t) { m_playhead = std::max(0.0, t); }   // no signal: used inside an edit so the preview seeks only once
+    void notifyPlayhead() { emit playheadChanged(m_playhead, false); }
+    QString activeTrack() const;                    // the track new markers go to (last clicked track)
+    void setActiveTrack(const QString &id);
     void setPlayhead(double t, bool fromPlayback = false);
 
     // runtime-only assets
@@ -54,6 +58,7 @@ signals:
     void selectionChanged();
     void mediaSelectionChanged();
     void playheadChanged(double t, bool fromPlayback);
+    void activeTrackChanged();
     void assetsChanged();
     void titleChanged();
     void dirtyChanged(bool);
@@ -63,6 +68,7 @@ private:
     QUndoStack m_undo;
     QString m_path, m_selClip, m_selMedia;
     QStringList m_sel;
+    QString m_activeTrack;
     void pruneSelection();
     bool m_dirty = false;
     double m_playhead = 0;

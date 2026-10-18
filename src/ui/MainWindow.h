@@ -80,7 +80,9 @@ private:
     void addTrack(TrackType t);
     void editSelected(const QString &what, const std::function<void(Clip &)> &fn);
     void setTransition(const QString &t);
-    void addMarker(double t);
+    void addMarker(double t, const QString &trackId = {});
+    void showMarkerMenu(int markerIndex, double time, const QPoint &globalPos);
+    void setPairColor(int markerIndex, const QString &color);
     void jumpEdge(int dir);
     void stepSpeed(int dir);
     void showClipMenu(const QString &id, const QPoint &gp);

@@ -310,6 +310,21 @@ int main(int argc, char **argv) {
         CHECK(back.title.italic && back.title.outline && back.title.caps && back.title.fontFamily == "DejaVu Sans" && back.title.shadow, QString("title style survives save/load"));
     }
 
+    section("markers: per track, time-ordered Ma/Mp naming, colours, old projects");
+    {
+        Project p = newProject(v1);
+        Marker a; a.time = 3.0; a.trackId = trackV1; Marker b; b.time = 1.0; b.trackId = trackV1; Marker c; c.time = 2.0; c.trackId = trackV1; c.color = "#39ff14";
+        Marker d; d.time = 5.0; d.trackId = trackA; Marker legacy; legacy.time = 9.0; legacy.name = "M7";          // no track: belongs to the first video track
+        p.markers = {a, b, c, d, legacy};
+        const auto v1idx = p.markerIndexesOnTrack(trackV1);
+        CHECK(v1idx.size() == 4 && near(p.markers[v1idx[0]].time, 1.0, 1e-9) && near(p.markers[v1idx[3]].time, 9.0, 1e-9), QString("markers are ordered by time per track"));
+        CHECK(p.markerLabel(v1idx[0]) == "Ma" && p.markerLabel(v1idx[1]) == "Mp" && p.markerLabel(v1idx[2]) == "Ma" && p.markerLabel(p.markerIndexesOnTrack(trackA).first()) == "Ma", QString("labels alternate Ma/Mp and restart on every track"));
+        const QJsonObject j = p.toJson();
+        QString err; Project q = Project::fromJson(j, "x.mveproj", &err);
+        CHECK(q.markers.size() == 5 && q.markers[2].color == "#39ff14" && q.markers[3].trackId == trackA, QString("marker colour and track survive save/load"));
+        CHECK(q.markers[4].name.isEmpty(), QString("old automatic names (M7) become Ma/Mp automatically"));
+    }
+
     section("render signature ignores markers/names, reacts to real edits");
     {
         Project p = newProject(v1); auto c = clip(p, v1, trackV1, 0, 0, 2);

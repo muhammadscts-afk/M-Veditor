@@ -45,6 +45,7 @@ TimelineView::TimelineView(ProjectModel *model, QWidget *parent) : QAbstractScro
 
     connect(m, &ProjectModel::changed, this, [this] { updateScrollBars(); invalidate(); });
     connect(m, &ProjectModel::selectionChanged, this, [this] { invalidate(); });
+    connect(m, &ProjectModel::activeTrackChanged, this, [this] { invalidate(); });
     connect(m, &ProjectModel::assetsChanged, this, [this] { invalidate(); });
     connect(m, &ProjectModel::playheadChanged, this, [this](double, bool fromPlayback) {
         if (fromPlayback) ensurePlayheadVisible();
@@ -68,13 +69,13 @@ bool TimelineView::compatible(const Clip &c, const MediaItem *media, const Track
     return t.type == TrackType::Video || (isAudioType(t.type) && media->hasAudio);   // a video may also be used for its sound only
 }
 
-QColor TimelineView::regionColor(const Project &p, int index) {
+QColor TimelineView::pairColor(const Project &p, const QString &trackId, int pairIndex) {
     static const QColor pal[] = {QColor(66, 133, 244), QColor(52, 168, 83), QColor(251, 188, 5), QColor(234, 67, 160), QColor(0, 188, 212), QColor(244, 81, 30)};
-    QVector<Marker> mk = p.markers;
-    std::sort(mk.begin(), mk.end(), [](const Marker &a, const Marker &b) { return a.time < b.time; });
-    QColor c = pal[index % 6];
-    if (index >= 1 && index - 1 < mk.size() && !mk[index - 1].color.isEmpty() && QColor(mk[index - 1].color).isValid()) c = QColor(mk[index - 1].color);
-    c.setAlpha(Theme::isDark() ? 30 : 38);     // very transparent
+    const QVector<int> idx = p.markerIndexesOnTrack(trackId);
+    QColor c = pal[pairIndex % 6];
+    const int first = 2 * pairIndex;
+    if (first < idx.size()) { const QColor mc(p.markers[idx[first]].color); if (!p.markers[idx[first]].color.isEmpty() && mc.isValid()) c = mc; }
+    c.setAlpha(Theme::isDark() ? 22 : 30);        // the chosen colour is used as is (never mixed with an earlier one), only very transparent
     return c;
 }
 
@@ -248,20 +249,17 @@ void TimelineView::paintStatic(QPainter &p) {
         p.fillRect(QRect(kHeaderW, top, viewport()->width() - kHeaderW, pr.tracks[i].height), (i % 2) ? Theme::trackB() : Theme::trackA());
         p.setPen(Theme::grid()); p.drawLine(0, top + pr.tracks[i].height - 1, viewport()->width(), top + pr.tracks[i].height - 1);
     }
-    // very transparent colour regions between marker lines
-    if (m_regions && !pr.markers.isEmpty()) {
-        QVector<double> pts;
-        for (auto &mk : pr.markers) pts << mk.time;
-        std::sort(pts.begin(), pts.end());
-        const double endT = std::max({pr.duration(), pts.last(), xToTime(viewport()->width())}) + 1;
-        double prev = 0;
-        for (int i = 0; i <= pts.size(); ++i) {
-            const double to = i < pts.size() ? pts[i] : endT;
-            const int x0 = std::max(kHeaderW, int(timeToX(prev))), x1 = std::min(viewport()->width(), int(timeToX(to)));
-            if (x1 > x0) p.fillRect(QRect(x0, kRulerH, x1 - x0, viewport()->height() - kRulerH), regionColor(pr, i));
-            prev = to;
+    // very transparent colour only BETWEEN the markers of a pair (Ma..Mp), only on the marker's own track
+    if (m_regions)
+        for (int i = 0; i < pr.tracks.size(); ++i) {
+            const int top = trackTop(i);
+            if (top + pr.tracks[i].height < kRulerH || top > viewport()->height()) continue;
+            const QVector<int> idx = pr.markerIndexesOnTrack(pr.tracks[i].id);
+            for (int k = 0; k + 1 < idx.size(); k += 2) {
+                const int x0 = std::max(kHeaderW, int(timeToX(pr.markers[idx[k]].time))), x1 = std::min(viewport()->width(), int(timeToX(pr.markers[idx[k + 1]].time)));
+                if (x1 > x0) p.fillRect(QRect(x0, top, x1 - x0, pr.tracks[i].height - 1), pairColor(pr, pr.tracks[i].id, k / 2));
+            }
         }
-    }
     static const double steps[] = {0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800, 3600};
     double step = 3600;
     for (double s : steps) if (s * m_pps >= 80) { step = s; break; }
@@ -282,6 +280,23 @@ void TimelineView::paintStatic(QPainter &p) {
         if (m_drag == Drag::Move && m_groupOrig.size() == 1) if (const Clip *dc = pr.clipById(m_dragClip)) if (m_ghostTrack == pr.tracks[i].id && dc->trackId != m_ghostTrack) {
             Clip g = effective(*dc); g.trackId = m_ghostTrack; paintClip(p, g, i, true);
         }
+    }
+    {   // marker lines and small flags, only inside their own track
+        p.setClipRect(area);
+        QFont mf = p.font(); mf.setPointSizeF(7.5); p.setFont(mf);
+        for (int i = 0; i < pr.tracks.size(); ++i) {
+            const int top = trackTop(i);
+            if (top + pr.tracks[i].height < kRulerH || top > viewport()->height()) continue;
+            for (int mi : pr.markerIndexesOnTrack(pr.tracks[i].id)) {
+                const int x = int(timeToX(pr.markers[mi].time));
+                if (x < kHeaderW - 12 || x > viewport()->width()) continue;
+                p.setPen(QColor(250, 190, 40, 170)); p.drawLine(x, top, x, top + pr.tracks[i].height - 1);
+                p.setPen(Qt::NoPen); p.setBrush(QColor(250, 190, 40));
+                QPolygon flag; flag << QPoint(x, top + 1) << QPoint(x + 8, top + 1) << QPoint(x + 8, top + 6) << QPoint(x, top + 12); p.drawPolygon(flag);
+                p.setPen(QColor(250, 210, 90)); p.drawText(x + 10, top, 40, 12, Qt::AlignLeft | Qt::AlignVCenter, pr.markerLabel(mi));
+            }
+        }
+        p.setClipping(false);
     }
     if (m_dropActive) {
         const int ti = pr.trackIndex(m_dropTrack);
@@ -304,6 +319,7 @@ void TimelineView::paintStatic(QPainter &p) {
         const int top = trackTop(i);
         if (top + t.height < kRulerH || top > viewport()->height()) continue;
         if (m_drag == Drag::TrackMove && i == m_moveFrom) p.fillRect(QRect(0, top, kHeaderW, t.height), QColor(66, 133, 244, 60));
+        if (t.id == m->activeTrack()) { p.fillRect(QRect(0, top, kHeaderW, t.height - 1), QColor(66, 133, 244, 28)); p.fillRect(QRect(0, top, 4, t.height - 1), QColor(66, 133, 244)); }
         p.setPen(Theme::grid()); p.drawLine(0, top + t.height - 1, kHeaderW, top + t.height - 1);
         p.setPen(t.locked ? Theme::dim() : Theme::text());
         p.drawText(QRect(8, top + 4, kHeaderW - 110, 20), Qt::AlignVCenter | Qt::AlignLeft, QFontMetrics(hf).elidedText(t.name, Qt::ElideRight, kHeaderW - 110));
@@ -343,15 +359,13 @@ void TimelineView::paintStatic(QPainter &p) {
         p.setPen(Theme::dim()); p.drawLine(x, kRulerH - 12, x, kRulerH - 1);
         p.setPen(Theme::text()); p.drawText(x + 4, 6, 90, kRulerH - 12, Qt::AlignLeft | Qt::AlignVCenter, humanTime(t, step < 1));
     }
-    for (const Marker &mk : pr.markers) {
-        const int x = int(timeToX(mk.time));
+    for (int mi : pr.markerIndexesOnTrack(m->activeTrack())) {      // ruler flags: markers of the active track
+        const int x = int(timeToX(pr.markers[mi].time));
         p.setPen(Qt::NoPen); p.setBrush(QColor(250, 190, 40));
         QPolygon flag; flag << QPoint(x, 3) << QPoint(x + 9, 3) << QPoint(x + 9, 10) << QPoint(x, 15);
         p.drawPolygon(flag);
-        if (!mk.name.isEmpty()) { p.setPen(QColor(250, 190, 40)); p.drawText(x + 12, 3, 80, 12, Qt::AlignLeft | Qt::AlignVCenter, mk.name); }
+        p.setPen(QColor(250, 190, 40)); p.drawText(x + 12, 3, 60, 12, Qt::AlignLeft | Qt::AlignVCenter, pr.markerLabel(mi));
     }
-    p.setClipRect(area);
-    for (const Marker &mk : pr.markers) { p.setPen(QColor(250, 190, 40, 130)); const int x = int(timeToX(mk.time)); p.drawLine(x, kRulerH, x, viewport()->height()); }
 }
 
 void TimelineView::paintPlayhead(QPainter &p) {
@@ -386,7 +400,7 @@ QString TimelineView::headerButtonTip(const QPoint &pt) const {
     if (ti < 0 || pt.x() >= kHeaderW) return {};
     const Track &t = m->project().tracks[ti];
     if (headerButton(0, ti).contains(pt)) return tr("Mute – silence this track in the preview and in the export.");
-    if (headerButton(1, ti).contains(pt)) return tr("Solo – hear ONLY the soloed tracks; all other tracks go silent.\nOn a video or title track it also shows only the soloed picture tracks.\nClick again to turn it off.");
+    if (headerButton(1, ti).contains(pt)) return tr("Solo – hear ONLY this track; all other tracks go silent (and the S of other tracks is switched off).\nOn a video or title track it also shows only this picture track.\nClick again to turn it off. Ctrl+click to solo several tracks.");
     if (headerButton(2, ti).contains(pt)) return tr("Lock – protects this track's clips from being moved or changed.");
     if ((t.type == TrackType::Video || t.type == TrackType::Title) && headerButton(3, ti).contains(pt)) return tr("Hide – do not show this track's picture (sound is not affected).");
     return tr("Drag this header up or down to reorder tracks. Right-click for more options.\nVideo tracks lower in the list are drawn on top of those above them; titles are always on top.");
@@ -435,18 +449,39 @@ double TimelineView::snapTime(double t, double dur, const QString &ignore, bool 
     return std::max(0.0, best);
 }
 
-void TimelineView::toggleTrackFlag(int ti, int which) {
+void TimelineView::toggleTrackFlag(int ti, int which, bool additive) {
     const QString id = m->project().tracks[ti].id;
     static const char *names[] = {"Mute track", "Solo track", "Lock track", "Hide track"};
-    m->mutate(tr(names[which]), [id, which](Project &p) {
+    m->mutate(tr(names[which]), [id, which, additive](Project &p) {
         Track *t = p.trackById(id); if (!t) return;
-        if (which == 0) t->muted = !t->muted; else if (which == 1) t->solo = !t->solo; else if (which == 2) t->locked = !t->locked; else t->hidden = !t->hidden;
+        if (which == 0) t->muted = !t->muted;
+        else if (which == 1) {
+            const bool on = !t->solo;
+            if (on && !additive) for (Track &o : p.tracks) o.solo = false;        // solo is exclusive: it switches off the other tracks' solo
+            t->solo = on;
+        } else if (which == 2) t->locked = !t->locked; else t->hidden = !t->hidden;
     });
     if (which == 1) {
         QStringList solos; for (auto &t : m->project().tracks) if (t.solo) solos << t.name;
         emit message(solos.isEmpty() ? tr("Solo is off – all tracks play normally.")
-                                     : tr("Solo: only %1 will be heard (other tracks are silent). Click S again to turn it off.").arg(solos.join(", ")));
+                                     : tr("Solo: only %1 is heard (other tracks are silent). Click S again to turn it off; Ctrl+click S to solo several tracks.").arg(solos.join(", ")));
     }
+}
+
+int TimelineView::markerAt(const QPoint &pt) const {
+    const Project &pr = m->project();
+    for (int i = 0; i < pr.tracks.size(); ++i) {                            // heads inside the lanes
+        const int top = trackTop(i);
+        for (int mi : pr.markerIndexesOnTrack(pr.tracks[i].id)) {
+            const int x = int(timeToX(pr.markers[mi].time));
+            if (pt.y() >= top && pt.y() <= top + 14 && pt.x() >= x - 4 && pt.x() <= x + 12) return mi;
+        }
+    }
+    for (int mi : pr.markerIndexesOnTrack(m->activeTrack())) {              // heads on the ruler
+        const int x = int(timeToX(pr.markers[mi].time));
+        if (pt.y() < kRulerH && pt.x() >= x - 4 && pt.x() <= x + 14) return mi;
+    }
+    return -1;
 }
 
 void TimelineView::mousePressEvent(QMouseEvent *e) {
@@ -454,6 +489,10 @@ void TimelineView::mousePressEvent(QMouseEvent *e) {
     const QPoint pt = e->pos();
     m_pressPos = pt;
     const Project &pr = m->project();
+    if (e->button() == Qt::RightButton && pt.x() >= kHeaderW) {
+        const int mi = markerAt(pt);
+        if (mi >= 0) { emit markerContextMenu(mi, e->globalPosition().toPoint()); return; }
+    }
     if (pt.y() < kRulerH) {
         if (pt.x() < kHeaderW) return;
         if (e->button() == Qt::RightButton) { emit rulerContextMenu(std::max(0.0, xToTime(pt.x())), e->globalPosition().toPoint()); return; }
@@ -464,9 +503,10 @@ void TimelineView::mousePressEvent(QMouseEvent *e) {
         const int ti = trackAt(pt.y());
         if (ti < 0) return;
         if (e->button() == Qt::RightButton) { emit trackContextMenu(pr.tracks[ti].id, e->globalPosition().toPoint()); return; }
+        m->setActiveTrack(pr.tracks[ti].id);
         const Track &t = pr.tracks[ti];
         if (headerButton(0, ti).contains(pt)) { toggleTrackFlag(ti, 0); return; }
-        if (headerButton(1, ti).contains(pt)) { toggleTrackFlag(ti, 1); return; }
+        if (headerButton(1, ti).contains(pt)) { toggleTrackFlag(ti, 1, e->modifiers() & Qt::ControlModifier); return; }
         if (headerButton(2, ti).contains(pt)) { toggleTrackFlag(ti, 2); return; }
         if ((t.type == TrackType::Video || t.type == TrackType::Title) && headerButton(3, ti).contains(pt)) { toggleTrackFlag(ti, 3); return; }
         if (pt.y() > trackTop(ti) + t.height - 6) { m_drag = Drag::TrackHeight; m_resizeTrack = ti; m_resizeOrigH = t.height; return; }
@@ -475,6 +515,7 @@ void TimelineView::mousePressEvent(QMouseEvent *e) {
     }
     const Hit h = hitTest(pt);
     const bool ctrl = e->modifiers() & Qt::ControlModifier, shift = e->modifiers() & Qt::ShiftModifier;
+    if (h.track >= 0) m->setActiveTrack(pr.tracks[h.track].id);          // the clicked track becomes the active one (markers go there)
     if (h.clipId.isEmpty()) {
         if (e->button() == Qt::RightButton && h.track >= 0) { emit laneContextMenu(pr.tracks[h.track].id, std::max(0.0, xToTime(pt.x())), e->globalPosition().toPoint()); return; }
         if (e->button() != Qt::LeftButton) return;

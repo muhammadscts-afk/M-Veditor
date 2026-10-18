@@ -95,6 +95,11 @@ void ProjectModel::setPlayhead(double t, bool fromPlayback) {
     m_playhead = t;
     emit playheadChanged(t, fromPlayback);
 }
+QString ProjectModel::activeTrack() const {
+    if (m_project.trackById(m_activeTrack)) return m_activeTrack;
+    return m_project.firstTrackOfType(TrackType::Video);
+}
+void ProjectModel::setActiveTrack(const QString &id) { if (m_activeTrack != id && m_project.trackById(id)) { m_activeTrack = id; emit activeTrackChanged(); } }
 void ProjectModel::setThumbnail(const QString &id, const QString &p) { m_thumbs[id] = p; emit assetsChanged(); }
 const QVector<float> *ProjectModel::waveform(const QString &mediaId) const {
     const MediaItem *m = m_project.mediaById(mediaId);

@@ -1,6 +1,7 @@
 #include "Project.h"
 #include <QDir>
 #include <QJsonDocument>
+#include <QRegularExpression>
 #include <QFileInfo>
 #include <QUuid>
 #include <algorithm>
@@ -179,6 +180,19 @@ QByteArray Project::renderSignature() const {
     o["c"] = c;
     return QJsonDocument(o).toJson(QJsonDocument::Compact);
 }
+QString Project::markerTrack(const Marker &m) const { return m.trackId.isEmpty() ? firstTrackOfType(TrackType::Video) : m.trackId; }
+QVector<int> Project::markerIndexesOnTrack(const QString &trackId) const {
+    QVector<int> v;
+    for (int i = 0; i < markers.size(); ++i) if (markerTrack(markers[i]) == trackId) v.push_back(i);
+    std::sort(v.begin(), v.end(), [&](int a, int b) { return markers[a].time < markers[b].time; });
+    return v;
+}
+QString Project::markerLabel(int index) const {
+    if (index < 0 || index >= markers.size()) return {};
+    if (!markers[index].name.isEmpty()) return markers[index].name;
+    const QVector<int> idx = markerIndexesOnTrack(markerTrack(markers[index]));
+    return idx.indexOf(index) % 2 == 0 ? QStringLiteral("Ma") : QStringLiteral("Mp");
+}
 bool Project::trackAudible(const Track &t) const {
     bool anySolo = false;
     for (auto &x : tracks) if (x.solo) anySolo = true;
@@ -244,7 +258,7 @@ QJsonObject Project::toJson(const QString &projectFilePath) const {
     QJsonArray c; for (auto &x : clips) c.push_back(x.toJson());
     o["clips"] = c;
     QJsonArray mk;
-    for (auto &x : markers) { QJsonObject j; j["time"] = x.time; j["name"] = x.name; if (!x.color.isEmpty()) j["color"] = x.color; mk.push_back(j); }
+    for (auto &x : markers) { QJsonObject j; j["time"] = x.time; j["name"] = x.name; if (!x.color.isEmpty()) j["color"] = x.color; if (!x.trackId.isEmpty()) j["trackId"] = x.trackId; mk.push_back(j); }
     o["markers"] = mk;
     return o;
 }
@@ -270,7 +284,9 @@ Project Project::fromJson(const QJsonObject &o, const QString &projectFilePath, 
     }
     for (auto v : o["tracks"].toArray()) p.tracks.push_back(Track::fromJson(v.toObject()));
     for (auto v : o["clips"].toArray()) p.clips.push_back(Clip::fromJson(v.toObject()));
-    for (auto v : o["markers"].toArray()) { Marker m; m.time = v.toObject()["time"].toDouble(); m.name = v.toObject()["name"].toString(); m.color = v.toObject()["color"].toString(); p.markers.push_back(m); }
+    for (auto v : o["markers"].toArray()) { Marker m; m.time = v.toObject()["time"].toDouble(); m.name = v.toObject()["name"].toString(); m.color = v.toObject()["color"].toString(); m.trackId = v.toObject()["trackId"].toString();
+        static const QRegularExpression autoName("^M\\d+$"); if (autoName.match(m.name).hasMatch()) m.name.clear();   // old automatic names -> Ma/Mp
+        p.markers.push_back(m); }
     p.ensureDefaultTracks();
     return p;
 }

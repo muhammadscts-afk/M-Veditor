@@ -376,8 +376,8 @@ const Clip *PreviewMonitor::nextVideoClip(double after) const {
 
 void PreviewMonitor::applyToPlayer(qint64 posMs, bool play, double rate, double vol) {
     m_activeRate = rate;
-    if (std::llabs(m_player->position() - posMs) > (play ? 350 : 20)) m_player->setPosition(posMs);
-    m_player->setPlaybackRate(std::clamp(rate, 0.1, 16.0));
+    m_player->setPlaybackRate(std::clamp(rate, 0.1, 16.0));                       // rate first ...
+    if (std::llabs(m_player->position() - posMs) > (play ? 350 : 20)) m_player->setPosition(posMs);   // ... then the position, so a rate change can't leave the picture elsewhere
     m_audio->setVolume(float(std::clamp(vol, 0.0, 1.0)));
     if (play) m_player->play(); else m_player->pause();
 }
@@ -525,7 +525,7 @@ void PreviewMonitor::syncTo(double t, bool play) {
             const double vol = pictureShown || true ? pitchAudioFor(*c, *mi, t, play, ownVol) : ownVol;       // 0 while the pitch-preserving stream plays
             if (m_activeClipId == c->id) {
                 if (play) {
-                    if (std::fabs(m_activeRate - c->fx.speed) > 1e-6 && !m_pending.valid) { m_player->setPlaybackRate(std::clamp(c->fx.speed, 0.1, 16.0)); m_activeRate = c->fx.speed; }   // speed changed while playing
+                    if (std::fabs(m_activeRate - c->fx.speed) > 1e-6 && !m_pending.valid) { m_player->setPlaybackRate(std::clamp(c->fx.speed, 0.1, 16.0)); m_activeRate = c->fx.speed; m_player->setPosition(target); }   // speed changed while playing: land exactly on the same frame
                     m_audio->setVolume(float(std::clamp(vol, 0.0, 1.0))); keepPlaying(target);
                 } else if (m_pending.valid) { m_pending.posMs = target; m_pending.play = false; } else applyToPlayer(target, false, c->fx.speed, vol);
             } else if (play && m_pre.clipId == c->id && m_pre.loaded) {

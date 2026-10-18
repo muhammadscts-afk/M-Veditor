@@ -21,7 +21,7 @@ public:
     void setRegionsVisible(bool on) { m_regions = on; invalidate(); }
     bool regionsVisible() const { return m_regions; }
     static bool compatible(const Clip &c, const MediaItem *m, const Track &t);
-    static QColor regionColor(const Project &p, int index);   // translucent tint between markers
+    static QColor pairColor(const Project &p, const QString &trackId, int pairIndex);   // very transparent tint between a Ma/Mp pair
 
 signals:
     void mediaDropped(const QString &mediaId, const QString &trackId, double start);
@@ -29,6 +29,7 @@ signals:
     void trackContextMenu(const QString &trackId, const QPoint &globalPos);
     void rulerContextMenu(double time, const QPoint &globalPos);
     void addTrackRequested(int trackType);
+    void markerContextMenu(int markerIndex, const QPoint &globalPos);   // right-click on a marker head
     void laneContextMenu(const QString &trackId, double time, const QPoint &globalPos);   // right-click on an empty part of a track
     void message(const QString &text);
 
@@ -60,6 +61,7 @@ private:
     QRect headerButton(int idx, int trackIdx) const;
     QString headerButtonTip(const QPoint &p) const;
     Hit hitTest(const QPoint &p) const;
+    int markerAt(const QPoint &p) const;
     Clip effective(const Clip &c) const;
     double snapTime(double t, double dur, const QString &ignoreClip, bool useEnd = true) const;
     void updateScrollBars();
@@ -70,7 +72,7 @@ private:
     QPixmap thumbFor(const QString &mediaId, int h);
     void paintClip(QPainter &p, const Clip &c, int trackIdx, bool ghost);
     void paintWave(QPainter &p, const Clip &c, const QRect &r, const QVector<float> &peaks, const QColor &col);
-    void toggleTrackFlag(int trackIdx, int which);
+    void toggleTrackFlag(int trackIdx, int which, bool additive = false);
 
     ProjectModel *m;
     QToolButton *m_addBtn;

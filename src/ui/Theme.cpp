@@ -11,7 +11,7 @@ class MVStyle : public QProxyStyle {
 public:
     MVStyle() : QProxyStyle("Fusion") {}
     int styleHint(StyleHint h, const QStyleOption *o = nullptr, const QWidget *w = nullptr, QStyleHintReturn *r = nullptr) const override {
-        if (h == SH_ToolTipLabel_Opacity) return 228;
+        if (h == SH_ToolTipLabel_Opacity) return 165;
         return QProxyStyle::styleHint(h, o, w, r);
     }
 };

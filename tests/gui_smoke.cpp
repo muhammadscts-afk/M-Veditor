@@ -21,6 +21,7 @@
 #include <QKeyEvent>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QScrollBar>
 #include <QAbstractSpinBox>
 #include <QComboBox>
 #include <QPushButton>
@@ -245,14 +246,118 @@ int main(int argc, char **argv) {
         if (liveBtn2) liveBtn2->setChecked(true);
         m->reset(saved, keepPath);
     }
-    std::cout << "- marker colour regions" << std::endl;
-    m->mutate("m1", [](Project &p) { p.markers.push_back({2.0, "A"}); p.markers.push_back({5.0, "B"}); });
-    CHECK(TimelineView::regionColor(m->project(), 0) != TimelineView::regionColor(m->project(), 1), "regions have different colours");
-    CHECK(TimelineView::regionColor(m->project(), 0).alpha() < 60, "regions are very transparent");
-    QTest::qWait(200);
-    w.grab().save("/tmp/mveditor_regions.png");
-    m->undoStack()->undo();
-
+    std::cout << "- markers: per track, Ma/Mp pairs, colour only between a pair" << std::endl;
+    {
+        m->mutate("clear markers", [](Project &p) { p.markers.clear(); });
+        auto addM = [&](double t, const QString &track) { m->mutate("marker", [&](Project &p) { Marker mk; mk.time = t; mk.trackId = track; p.markers.push_back(mk); }); };
+        addM(3.0, trV1); addM(1.0, trV1); addM(2.0, trV1); addM(1.5, trA);
+        const Project &pr = m->project();
+        QStringList labels; for (int i : pr.markerIndexesOnTrack(trV1)) labels << pr.markerLabel(i);
+        CHECK(labels == QStringList({"Ma", "Mp", "Ma"}), QString("markers on a track are named Ma, Mp, Ma ... in time order: %1").arg(labels.join(",")));
+        CHECK(pr.markerIndexesOnTrack(trV1).size() == 3 && pr.markerIndexesOnTrack(trA).size() == 1 && pr.markerLabel(pr.markerIndexesOnTrack(trA).first()) == "Ma", "each track has its own marker sequence");
+        addM(4.0, trV1);
+        CHECK(pr.markerLabel(pr.markerIndexesOnTrack(trV1).last()) == "Mp", "4th marker completes the second pair (Mp)");
+        const QColor c0 = TimelineView::pairColor(m->project(), trV1, 0), c1 = TimelineView::pairColor(m->project(), trV1, 1);
+        CHECK(c0 != c1 && c0.alpha() < 40 && c1.alpha() < 40, QString("pairs get different, very transparent colours (alpha %1)").arg(c0.alpha()));
+        // colour the first pair green, then orange: the new colour must be exactly the chosen one (never mixed with the previous)
+        const int firstMa = m->project().markerIndexesOnTrack(trV1).first();
+        m->mutate("c", [&](Project &p) { p.markers[firstMa].color = "#39ff14"; });
+        QColor g1 = TimelineView::pairColor(m->project(), trV1, 0);
+        m->mutate("c", [&](Project &p) { p.markers[firstMa].color = "#ff9100"; });
+        QColor g2 = TimelineView::pairColor(m->project(), trV1, 0);
+        CHECK(g1.red() == 0x39 && g1.green() == 0xff && g2.red() == 0xff && g2.green() == 0x91 && g2.blue() == 0 && TimelineView::pairColor(m->project(), trV1, 1) == c1,
+              "recolouring uses exactly the new colour, other pairs are untouched");
+        m->setActiveTrack(trA); w.findChild<QAction *>("marker")->trigger();
+        CHECK(m->project().markerIndexesOnTrack(trA).size() == 2, "the M key adds a marker to the active (clicked) track");
+        m->mutate("c", [&](Project &p) { p.markers[firstMa].color = "#9fe8ff"; });
+        QTest::qWait(200);
+        w.grab().save("/tmp/mveditor_regions.png");
+    }
+    std::cout << "- solo is exclusive (mouse clicks on the S buttons)" << std::endl;
+    {
+        w.timeline()->verticalScrollBar()->setValue(0);
+        auto topOf = [&](int i) { int t = 30; for (int k = 0; k < i; ++k) t += m->project().tracks[k].height; return t; };
+        auto clickS = [&](int i, Qt::KeyboardModifiers mod = Qt::NoModifier) { QTest::mouseClick(w.timeline()->viewport(), Qt::LeftButton, mod, QPoint(125, topOf(i) + 15)); QTest::qWait(30); };
+        auto solo = [&](int i) { return m->project().tracks[i].solo; };
+        clickS(1); CHECK(solo(1) && !solo(0) && !solo(2), "click S on track 2: it is soloed");
+        clickS(2); CHECK(solo(2) && !solo(1), "click S on another track switches the previous solo OFF");
+        clickS(1, Qt::ControlModifier); CHECK(solo(1) && solo(2), "Ctrl+click S solos several tracks");
+        clickS(2); CHECK(!solo(2) && solo(1), "clicking a soloed S turns it off");
+        clickS(1); CHECK(!solo(1), "all solos off again");
+        w.timeline()->viewport()->update();
+    }
+    std::cout << "- speed change anchors on whichever selected clip is under the playhead" << std::endl;
+    {
+        Project saved = m->project(); const QString keepPath = m->filePath();
+        MediaItem v0; for (auto &mi : saved.media) if (mi.kind == "video") v0 = mi;
+        Project two = Project::singleClip(v0, 0, 4.0); two.tracks.clear(); two.ensureDefaultTracks();
+        QString v1id; for (auto &t : two.tracks) if (t.name == "Video 1") v1id = t.id;
+        two.clips[0].trackId = v1id;
+        Clip c2 = two.clips[0]; c2.id = "c2x"; c2.start = 4.0; c2.in = 4.0; c2.out = 8.0; two.clips.push_back(c2);
+        m->reset(two, QString());
+        m->setSelection({"c2x", "c1"});                      // main clip is c1, but the playhead is inside c2
+        m->setPlayhead(5.5);
+        if (QWidget *f = QApplication::focusWidget()) f->clearFocus();
+        QKeyEvent ev(QEvent::KeyPress, Qt::Key_BracketRight, Qt::NoModifier, "]"); QApplication::sendEvent(&w, &ev);
+        const Clip *cc = m->project().clipById("c2x");
+        const double moment = cc->in + (m->playhead() - cc->start) * cc->fx.speed;
+        CHECK(near(cc->fx.speed, 1.1, 1e-9) && near(m->project().clipById("c1")->fx.speed, 1.1, 1e-9), "both selected clips change speed");
+        CHECK(near(moment, 5.5, 1e-6), QString("the playhead stays on the same frame of the clip it was in (%1)").arg(moment));
+        m->reset(saved, keepPath);
+    }
+    std::cout << "- live playback: no rendering, playhead advances smoothly, panels start narrow" << std::endl;
+    {
+        auto *prev = w.findChild<PreviewMonitor *>();
+        QToolButton *lb = nullptr; for (auto *b : prev->findChildren<QToolButton *>()) if (b->text() == "Live") lb = b;
+        if (lb) lb->setChecked(true);
+        prev->pause();
+        m->setPlayhead(1.0);
+        QTest::qWait(200);
+        prev->togglePlay();
+        CHECK(prev->isPlaying() && prev->mode() == PreviewMonitor::Mode::Timeline && !w.busy(), "Space starts live playback instantly without any render job");
+        QVector<double> samples;
+        for (int i = 0; i < 12; ++i) { QTest::qWait(50); samples << m->playhead(); }
+        prev->pause();
+        bool monotonic = true; for (int i = 1; i < samples.size(); ++i) if (samples[i] < samples[i - 1] - 1e-9) monotonic = false;
+        int distinct = 1; for (int i = 1; i < samples.size(); ++i) if (samples[i] > samples[i - 1] + 1e-6) ++distinct;
+        CHECK(monotonic && samples.last() > 1.3 && samples.last() < 2.6, QString("playhead advances in real time (1.0 -> %1 s in ~0.6 s)").arg(samples.last()));
+        CHECK(distinct >= 8, QString("playhead moves on almost every 50 ms sample (%1 of 12 distinct) = smooth").arg(distinct));
+        m->mutate("marker while idle", [](Project &p) { p.markers.push_back({0.2, "z"}); });
+        m->undoStack()->undo();
+        auto *dp = w.findChild<QDockWidget *>("dockProps"); auto *dl = w.findChild<QDockWidget *>("dockLib");
+        if (qEnvironmentVariableIsSet("MV_DEBUG_W")) for (const char *nm : {"dockProps", "dockExport"}) {
+            auto *d = w.findChild<QDockWidget *>(nm); if (!d) continue;
+            std::cout << nm << " minSizeHint=" << d->minimumSizeHint().width() << " widget=" << d->widget()->minimumSizeHint().width() << std::endl;
+            for (auto *c : d->widget()->findChildren<QWidget *>()) if (c->minimumSizeHint().width() > 140 && c->isVisibleTo(d->widget()))
+                std::cout << "   " << c->metaObject()->className() << " '" << c->objectName().toStdString() << "' min=" << c->minimumSizeHint().width() << " text=" << (qobject_cast<QLabel*>(c) ? qobject_cast<QLabel*>(c)->text().left(30).toStdString() : std::string()) << std::endl;
+        }
+        CHECK(dp && dl && dp->width() <= 260 && dl->width() <= 230, QString("docks start at (near) their minimum width: props %1, library %2").arg(dp ? dp->width() : -1).arg(dl ? dl->width() : -1));
+    }
+    std::cout << "- direct play of a single clip (no render)" << std::endl;
+    {
+        auto *prev = w.findChild<PreviewMonitor *>();
+        const QString keepPath = m->filePath();
+        Project saved = m->project();
+        MediaItem mv0; for (auto &mi : saved.media) if (mi.kind == "video") mv0 = mi;
+        Project single = Project::singleClip(mv0, 1.0, 5.0);
+        single.tracks.clear(); single.ensureDefaultTracks();
+        QString v1id; for (auto &t : single.tracks) if (t.name == "Video 1") v1id = t.id;
+        single.clips[0].trackId = v1id;
+        m->reset(single, QString());
+        QToolButton *liveBtn2 = nullptr;
+        for (auto *b : prev->findChildren<QToolButton *>()) if (b->text() == "Live") liveBtn2 = b;
+        if (liveBtn2) liveBtn2->setChecked(false);
+        QElapsedTimer tm; tm.start();
+        prev->togglePlay();
+        CHECK(prev->mode() == PreviewMonitor::Mode::Rendered && !w.busy() && tm.elapsed() < 3000, QString("single clip plays directly without rendering (%1 ms)").arg(tm.elapsed()));
+        m->mutate("m", [](Project &p) { p.markers.push_back({0.5, "q"}); });
+        CHECK(prev->mode() == PreviewMonitor::Mode::Rendered, "marker during direct play keeps playing");
+        m->mutate("fx", [](Project &p) { p.clips[0].fx.saturation = 1.5; });
+        CHECK(prev->mode() == PreviewMonitor::Mode::Timeline, "an effect on the clip leaves direct mode");
+        prev->pause();
+        if (liveBtn2) liveBtn2->setChecked(true);
+        m->reset(saved, keepPath);
+    }
     std::cout << "- save and reopen (project format)" << std::endl;
     const QString projPath = dir.filePath("my project.mveproj");
     // save through the same code path the menu uses
@@ -357,7 +462,7 @@ int main(int argc, char **argv) {
         for (QWidget *t : QApplication::topLevelWidgets()) if (QString(t->metaObject()->className()) == "QTipLabel" && t->isVisible()) tip = t;
         CHECK(tip != nullptr, "tooltip window appears");
         if (tip) {
-            CHECK(tip->windowOpacity() < 0.99 && tip->windowOpacity() > 0.6, QString("tooltip is slightly transparent (opacity %1)").arg(tip->windowOpacity()));
+            CHECK(tip->windowOpacity() < 0.8 && tip->windowOpacity() > 0.4, QString("tooltip is clearly transparent (opacity %1)").arg(tip->windowOpacity()));
             const QImage img = tip->grab().toImage();
             const QColor bg = img.pixelColor(3, img.height() / 2);
             CHECK(bg.lightness() < 90, QString("tooltip background is dark grey (lightness %1)").arg(bg.lightness()));

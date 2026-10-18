@@ -44,7 +44,9 @@ UTF-8 JSON. All times are seconds (floating point). The file never contains medi
                  "boxOpacity": 0.5, "posX": 0.5, "posY": 0.85, "kind": "title" }   // only for title clips
     }
   ],
-  "markers": [ { "time": 4.2, "name": "M1", "color": "#4285f4" } ]   // color optional: tint of the region starting at the marker
+  "markers": [ { "time": 4.2, "name": "", "trackId": "t1", "color": "#39ff14" } ]
+  // markers belong to a track (empty trackId = first video track); name empty = automatic Ma/Mp by time order within the track;
+  // markers are used in pairs (1st+2nd, 3rd+4th ...); color (optional, on the first marker of a pair) tints the area between the pair
 }
 ```
 

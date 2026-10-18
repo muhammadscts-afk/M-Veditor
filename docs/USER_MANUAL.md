@@ -48,11 +48,15 @@ The controls under the picture are on one line (play controls and time on the le
 * **Reorder** tracks by dragging a track header up or down (a yellow line shows where it will land), or right-click ▸ **Move track up / down**.
 * **Layering:** video tracks *lower in the list are drawn on top of* those above them – so Video 2 covers Video 1. Title tracks are always drawn on top of all video. Use this for overlays, picture-in-picture and watermarks.
 * **Clips can move between tracks** by dragging up or down: video clips between video tracks (or onto an audio track to use only their sound), audio clips between audio/music/voice-over tracks, titles between title tracks.
-* **M (Mute)** silences the track. **S (Solo)** means *"listen to this track only"*: while any track is soloed every other track is silent (preview and export). On a video or title track Solo also shows only the soloed picture tracks. Click S again to turn it off – the track header says "silent (solo)" for tracks that are being skipped. **L (Lock)** protects a track's clips. **H (Hide)** hides a track's picture only – its sound keeps playing in the preview and the export. In live playback M and S also silence the video's own sound immediately.
+* **M (Mute)** silences the track. **S (Solo)** means *"listen to this track only"*: clicking S on a track soloes it and **switches off the S of every other track**, so only one track is solo at a time (Ctrl+click S to solo several tracks). While a track is soloed every other track is silent (preview and export). On a video or title track Solo also shows only the soloed picture tracks. Click S again to turn it off – the track header says "silent (solo)" for tracks that are being skipped. **L (Lock)** protects a track's clips. **H (Hide)** hides a track's picture only – its sound keeps playing in the preview and the export. In live playback M and S also silence the video's own sound immediately.
 * Hover any button for a tip. Right-click a header to rename, set track volume, change height, move or delete. Drag the lower edge of a header to resize the track.
 
-### Markers and colour regions
-Press **M** to drop a marker at the playhead. Right-click the ruler to add, rename or delete markers, or to **change the colour** of the region after a marker. The areas between marker lines are tinted with different, very transparent colours across all tracks, so you can see sections of your edit at a glance. Turn this off in **View ▸ Colour regions between markers**.
+### Markers and colour between them
+* **Markers belong to one track.** The *active track* is the one you clicked last (its header gets a blue bar). Press **M** to drop a marker at the playhead on the active track, or right-click the ruler / an empty spot of a track ▸ **Add marker here**. You can have markers on as many tracks as you like; each marker's line and tint appear **only on its own track**.
+* **Pairs:** on each track the markers are used in pairs in time order: the 1st and 2nd (**Ma**, **Mp**), the 3rd and 4th (**Ma**, **Mp**), and so on. The area **between the two markers of a pair** is tinted with a very transparent colour. Nothing is tinted between pairs (between Mp and the next Ma), before the first marker, or after a last unpaired Ma – that one waits for its Mp.
+* **Names** are automatic (Ma, Mp, Ma, Mp …) and follow the time order, so they always make sense even if you add a marker earlier on the track. Use *Rename…* for a custom name.
+* **Right-click a marker head** (the little flag on the track or on the ruler) to rename or delete it or to pick the colour of its pair: **bright green, bright yellow, bright orange, bright light blue**, pink, violet, red, *Other colour…* or *Automatic*. A new colour replaces the old one completely – colours are never mixed.
+* Turn the tint off in **View ▸ Colour regions between markers** (the marker lines stay).
 
 ## 4. Speed controller (slow motion and fast motion)
 
@@ -65,7 +69,7 @@ Select a clip and choose **Video ▸ Speed controller** (Ctrl+R) or the **Speed*
 * **Audio**: keep it, mute it, or **detach** it to an audio track at its original speed.
 * **Play in reverse** is available in the same dialog.
 
-**Keyboard:** select a clip and press **]** (**د** on the Arabic keyboard) to make it 0.1× faster or **[** (**ج**) to make it 0.1× slower. Each press changes the speed by 0.1× (hold Shift is not needed), many presses count as **one** undo step, and the playhead stays on the same frame of the video instead of jumping. The keys do nothing while you are typing in a text or number box (press Enter in a box to leave it so the keys work again). The arrow, comma/period and bracket keys work with both the English and the Arabic keyboard layout.
+**Keyboard:** select a clip and press **]** (**د** on the Arabic keyboard) to make it 0.1× faster or **[** (**ج**) to make it 0.1× slower. Each press changes the speed by 0.1×, many presses count as **one** undo step, and the picture stays on the same frame (the red playhead moves along the timeline instead, because the whole clip becomes shorter or longer). If several clips are selected they all change; the frame is kept for the selected clip that is under the playhead. The keys do nothing while you are typing in a text or number box (press Enter in a box to leave it so the keys work again). The arrow, comma/period and bracket keys work with both the English and the Arabic keyboard layout.
 
 The speed is applied to the real picture and sound during export – it is not just a preview setting. The original file is untouched.
 
