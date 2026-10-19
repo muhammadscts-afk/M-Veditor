@@ -2,7 +2,11 @@
 #include "AppSettings.h"
 #include "MediaProbe.h"
 #include <QFileInfo>
+#include <QCloseEvent>
 #include <QHBoxLayout>
+#include <QPainter>
+#include <QScreen>
+#include <QScrollBar>
 #include <QJsonDocument>
 #include <QPushButton>
 #include <QUrl>
@@ -11,6 +15,58 @@
 #include <cmath>
 
 namespace mv {
+
+// ======================================================================= full screen window
+FullscreenWindow::FullscreenWindow(QGraphicsScene *scene) : QWidget(nullptr, Qt::Window) {
+    setObjectName("mvfs");
+    setWindowTitle(tr("M Veditor – full screen"));
+    setStyleSheet("#mvfs { background: black; } #fsbar { background: rgba(15,15,18,205); } #fsbar QLabel { color: white; font-size: 10pt; } #fsbar QToolButton { color: white; border: none; padding: 4px 8px; font-size: 10pt; } #fsbar QToolButton:hover { background: rgba(255,255,255,40); }");
+    setMouseTracking(true);
+    setFocusPolicy(Qt::StrongFocus);
+    m_view = new QGraphicsView(scene, this);
+    m_view->setFrameShape(QFrame::NoFrame); m_view->setBackgroundBrush(Qt::black); m_view->setRenderHint(QPainter::SmoothPixmapTransform);
+    m_view->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff); m_view->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_view->setFocusPolicy(Qt::NoFocus); m_view->viewport()->setFocusPolicy(Qt::NoFocus);
+    m_view->viewport()->setMouseTracking(true); m_view->viewport()->installEventFilter(this);
+    m_bar = new QWidget(this); m_bar->setObjectName("fsbar"); m_bar->setMouseTracking(true); m_bar->installEventFilter(this);
+    play = new QToolButton; play->setIcon(style()->standardIcon(QStyle::SP_MediaPlay)); play->setIconSize(QSize(24, 24)); play->setFocusPolicy(Qt::NoFocus);
+    time = new QLabel("00:00.000 / 00:00.000"); time->setMinimumWidth(190);
+    slider = new SeekSlider(Qt::Horizontal); slider->setRange(0, 10000); slider->setFocusPolicy(Qt::NoFocus);
+    slider->setStyleSheet("QSlider::groove:horizontal { height: 8px; background: #50545e; border-radius: 4px; } QSlider::sub-page:horizontal { background: #2d7ff9; border-radius: 4px; }"
+                          "QSlider::handle:horizontal { width: 18px; margin: -6px 0; border-radius: 9px; background: #ff4757; border: 2px solid #ffffff; }");
+    auto *exitB = new QToolButton; exitB->setText(tr("Exit full screen (Esc)")); exitB->setFocusPolicy(Qt::NoFocus);
+    auto *lay = new QHBoxLayout(m_bar); lay->setContentsMargins(14, 8, 14, 8); lay->setSpacing(10);
+    lay->addWidget(play); lay->addWidget(time); lay->addWidget(slider, 1); lay->addWidget(exitB);
+    connect(play, &QToolButton::clicked, this, &FullscreenWindow::togglePlayRequested);
+    connect(exitB, &QToolButton::clicked, this, &FullscreenWindow::exitRequested);
+    m_hide.setSingleShot(true); m_hide.setInterval(2500);
+    connect(&m_hide, &QTimer::timeout, this, &FullscreenWindow::hideBar);
+}
+void FullscreenWindow::showBar() {
+    m_bar->show(); m_bar->raise();
+    m_view->viewport()->unsetCursor(); unsetCursor();
+    m_hide.start();
+}
+void FullscreenWindow::hideBar() {
+    if (m_bar->underMouse()) { m_hide.start(); return; }                    // never hide while the pointer is on the bar
+    m_bar->hide(); m_view->viewport()->setCursor(Qt::BlankCursor); setCursor(Qt::BlankCursor);
+}
+void FullscreenWindow::keyPressEvent(QKeyEvent *e) {
+    if (e->key() == Qt::Key_Escape) emit exitRequested();
+    else if (e->key() == Qt::Key_Space) emit togglePlayRequested();
+    else QWidget::keyPressEvent(e);
+}
+void FullscreenWindow::closeEvent(QCloseEvent *e) { e->ignore(); emit exitRequested(); }
+void FullscreenWindow::resizeEvent(QResizeEvent *) {
+    m_view->setGeometry(rect());
+    m_bar->setGeometry(0, height() - 60, width(), 60);
+    m_view->fitInView(m_view->scene()->sceneRect(), Qt::KeepAspectRatio);
+}
+bool FullscreenWindow::eventFilter(QObject *o, QEvent *e) {
+    if ((o == m_view->viewport() || o == m_bar) && (e->type() == QEvent::MouseMove || e->type() == QEvent::MouseButtonPress)) showBar();
+    if (o == m_view->viewport() && e->type() == QEvent::MouseButtonDblClick) { emit exitRequested(); return true; }
+    return QWidget::eventFilter(o, e);
+}
 
 static constexpr double kLookahead = 2.5;   // seconds: how early the next clip / audio clip is prepared
 
@@ -28,6 +84,7 @@ PreviewMonitor::PreviewMonitor(ProjectModel *model, QWidget *parent) : QWidget(p
     m_image = m_scene->addPixmap(QPixmap()); m_image->setVisible(false);
     m_busy = m_scene->addSimpleText(QString()); m_busy->setBrush(Qt::white); m_busy->setZValue(30); m_busy->setVisible(false);
     m_note = m_scene->addSimpleText(QString()); m_note->setBrush(QColor(255, 255, 255, 170)); m_note->setZValue(29); m_note->setVisible(false);
+    m_badge = m_scene->addSimpleText(QString()); m_badge->setBrush(QColor(255, 220, 80)); m_badge->setZValue(28); m_badge->setVisible(false);
     m_player = new QMediaPlayer(this); m_audio = new QAudioOutput(this);
     m_player->setAudioOutput(m_audio); m_player->setVideoOutput(m_video);
     m_pitch = new PitchAudio(this);
@@ -103,6 +160,29 @@ PreviewMonitor::PreviewMonitor(ProjectModel *model, QWidget *parent) : QWidget(p
         if (b <= a) b = mi->duration;
         emit addToTimelineRequested(m_sourceId, a, b);
     });
+    // small dotted-rectangle button at the bottom right of the picture: full screen
+    m_fsBtn = new QToolButton(m_view->viewport());
+    {
+        QPixmap pm(20, 20); pm.fill(Qt::transparent);
+        QPainter pp(&pm); pp.setRenderHint(QPainter::Antialiasing);
+        pp.setPen(QPen(QColor(255, 255, 255, 235), 1.6, Qt::DotLine)); pp.drawRect(QRectF(3, 4, 14, 12));
+        pp.setPen(QPen(QColor(255, 255, 255, 235), 2.0, Qt::SolidLine, Qt::RoundCap));
+        pp.drawLine(QPointF(3, 4), QPointF(7, 4)); pp.drawLine(QPointF(3, 4), QPointF(3, 8)); pp.drawLine(QPointF(17, 16), QPointF(13, 16)); pp.drawLine(QPointF(17, 16), QPointF(17, 12));
+        m_fsBtn->setIcon(QIcon(pm)); m_fsBtn->setIconSize(QSize(20, 20));
+    }
+    m_fsBtn->setToolTip(tr("Full screen (F11). Move the mouse to show the seek bar; Esc exits."));
+    m_fsBtn->setCursor(Qt::PointingHandCursor); m_fsBtn->setFixedSize(30, 26);
+    m_fsBtn->setStyleSheet("QToolButton { background: rgba(0,0,0,120); border: none; border-radius: 4px; } QToolButton:hover { background: rgba(45,127,249,210); }");
+    m_view->viewport()->installEventFilter(this);
+    connect(m_fsBtn, &QToolButton::clicked, this, &PreviewMonitor::toggleFullscreen);
+    m_srcTimer.setInterval(120); connect(&m_srcTimer, &QTimer::timeout, this, &PreviewMonitor::syncSourceAudio);
+    m_fsSync.setInterval(100);
+    connect(&m_fsSync, &QTimer::timeout, this, [this] {
+        if (!m_fs) return;
+        if (!m_sliderDrag) { QSignalBlocker b(m_fs->slider); m_fs->slider->setValue(m_slider->value()); }
+        m_fs->time->setText(m_time->text());
+        m_fs->play->setIcon(style()->standardIcon(isPlaying() ? QStyle::SP_MediaPause : QStyle::SP_MediaPlay));
+    });
     connect(m_slider, &SeekSlider::dragStateChanged, this, [this](bool d) { m_sliderDrag = d; });
     connect(m_slider, &SeekSlider::seekRequested, this, &PreviewMonitor::onSeek);
     wire(m_player); wire(m_pre.pl);
@@ -135,6 +215,7 @@ void PreviewMonitor::onPosition(QMediaPlayer *pl, qint64 pos) {
 void PreviewMonitor::onState(QMediaPlayer *pl, QMediaPlayer::PlaybackState s) {
     if (pl != m_player) return;
     if (m_mode != Mode::Timeline) m_play->setIcon(style()->standardIcon(s == QMediaPlayer::PlayingState ? QStyle::SP_MediaPause : QStyle::SP_MediaPlay));
+    if (m_mode == Mode::Source) { if (s == QMediaPlayer::PlayingState) m_srcTimer.start(); else { m_srcTimer.stop(); syncSourceAudio(); } }
     if (m_mode == Mode::Rendered && s == QMediaPlayer::PlayingState) { m_lastReported = m_player->position(); m_lastClock.restart(); m_smooth.start(); }
     else if (m_mode == Mode::Rendered) m_smooth.stop();
 }
@@ -156,6 +237,69 @@ void PreviewMonitor::onStatus(QMediaPlayer *pl, QMediaPlayer::MediaStatus st) {
             if (v.pend.play) v.pl->play(); else v.pl->pause();
         }
     }
+}
+
+bool PreviewMonitor::eventFilter(QObject *o, QEvent *e) {
+    if (o == m_view->viewport() && m_fsBtn && (e->type() == QEvent::Resize || e->type() == QEvent::Show)) {
+        const QWidget *vp = m_view->viewport();
+        m_fsBtn->move(vp->width() - m_fsBtn->width() - 8, vp->height() - m_fsBtn->height() - 8); m_fsBtn->raise();
+    }
+    return QWidget::eventFilter(o, e);
+}
+
+void PreviewMonitor::updateBadge() {
+    if (m_mode != Mode::Source || std::fabs(m_srcSpeed - 1.0) < 1e-6) { m_badge->setVisible(false); return; }
+    QFont f; f.setBold(true); f.setPixelSize(std::max(16, m_ch / 14));
+    m_badge->setFont(f); m_badge->setText(QString("%1×").arg(QString::number(m_srcSpeed, 'f', 1)));
+    m_badge->setPos(m_cw - m_badge->boundingRect().width() - m_cw * 0.02, m_ch * 0.02);
+    m_badge->setVisible(true);
+}
+
+void PreviewMonitor::setSourceSpeed(double s) {
+    m_srcSpeed = std::clamp(std::round(s * 100) / 100.0, 0.1, 16.0);
+    if (m_mode == Mode::Source) { m_player->setPlaybackRate(m_srcSpeed); syncSourceAudio(); }
+    updateBadge();
+}
+
+// Source playback at another speed: the player's own speed change shifts the pitch, so the sound goes through the pitch-preserving stream.
+void PreviewMonitor::syncSourceAudio() {
+    if (m_mode != Mode::Source) return;
+    const MediaItem *mi = m->project().mediaById(m_sourceId);
+    const bool need = m_player->playbackState() == QMediaPlayer::PlayingState && std::fabs(m_srcSpeed - 1.0) > 1e-6 && mi && mi->hasAudio && !mi->missing;
+    if (!need) { if (m_pitch->active()) stopPitch(); m_audio->setVolume(1.0); return; }
+    constexpr double kLatency = 0.28;
+    const double srcNow = m_player->position() / 1000.0;
+    bool restart = m_pitchClipId != "source" || std::fabs(m_pitchSpeed - m_srcSpeed) > 1e-6 || !m_pitch->active();
+    if (!restart) {
+        const double e = m_pitchClock.elapsed() / 1000.0;
+        if (e > kLatency + 0.4) { const double predicted = m_pitchStartSrc + (e - kLatency) * m_srcSpeed; if (std::fabs(predicted - srcNow) > 0.7 * std::max(1.0, m_srcSpeed)) restart = true; }
+    }
+    if (restart) {
+        m_pitchStartSrc = srcNow + kLatency * m_srcSpeed;
+        if (!m_pitch->start(mi->path, m_pitchStartSrc, m_srcSpeed, 1.0)) { stopPitch(); m_audio->setVolume(1.0); return; }
+        m_pitchClock.start(); m_pitchClipId = "source"; m_pitchSpeed = m_srcSpeed;
+    }
+    m_audio->setVolume(0.0);
+}
+
+void PreviewMonitor::toggleFullscreen() { if (m_fs) exitFullscreen(); else enterFullscreen(); }
+void PreviewMonitor::enterFullscreen() {
+    if (m_fs) return;
+    m_fs = new FullscreenWindow(m_scene);
+    connect(m_fs, &FullscreenWindow::exitRequested, this, &PreviewMonitor::exitFullscreen);
+    connect(m_fs, &FullscreenWindow::togglePlayRequested, this, &PreviewMonitor::togglePlay);
+    connect(m_fs->slider, &SeekSlider::seekRequested, this, &PreviewMonitor::onSeek);
+    connect(m_fs->slider, &SeekSlider::dragStateChanged, this, [this](bool d) { m_sliderDrag = d; });
+    if (QScreen *sc = window()->screen()) m_fs->setGeometry(sc->geometry());       // on the screen the editor is on
+    m_fs->showFullScreen(); m_fs->setFocus(); m_fs->showBar();
+    m_fsSync.start();
+}
+void PreviewMonitor::exitFullscreen() {
+    if (!m_fs) return;
+    m_fsSync.stop();
+    FullscreenWindow *w = m_fs; m_fs = nullptr;
+    w->hide(); w->deleteLater();
+    fit();
 }
 
 void PreviewMonitor::showEvent(QShowEvent *) { fit(); }
@@ -208,7 +352,9 @@ void PreviewMonitor::setMode(Mode md) {
         releaseLive();
     }
     if (md != Mode::Rendered) m_smooth.stop();
-    updateLiveNote();
+    if (md != Mode::Source) m_srcTimer.stop();
+    updateLiveNote(); updateBadge();
+    emit modeChanged();
 }
 
 void PreviewMonitor::stopPitch() { if (m_pitch) m_pitch->stop(); m_pitchClipId.clear(); m_pitchSpeed = 0; }
@@ -233,6 +379,7 @@ void PreviewMonitor::playSource(const QString &mediaId) {
     if (mi->missing) { emit message(tr("This file is missing. Use File > Relink Missing Media.")); return; }
     setMode(Mode::Source);
     showBusy({});
+    m_srcSpeed = 1.0; updateBadge();
     m_sourceId = mediaId; m_markIn = m_markOut = -1; m_srcFps = mi->fps > 0 ? mi->fps : 30;
     setCanvas(mi->width ? mi->width : 1280, mi->height ? mi->height : 720);
     m_image->setVisible(false);
@@ -302,6 +449,7 @@ void PreviewMonitor::pause() {
     if (m_tlPlaying) { m_tlPlaying = false; m_timer.stop(); }
     m_smooth.stop();
     stopPitch();
+    if (m_mode == Mode::Source) m_audio->setVolume(1.0);
     m_player->pause();
     if (m_pre.pl) m_pre.pl->pause();
     for (Voice &v : m_voices) { v.pl->pause(); v.pend.play = false; }

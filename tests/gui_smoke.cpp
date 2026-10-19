@@ -428,6 +428,90 @@ int main(int argc, char **argv) {
         if (le) { le->setFocus(); QTest::qWait(60); if (QApplication::focusWidget() == le) { const double before = speedNow(); press(0x62F, DAL); CHECK(near(speedNow(), before, 1e-9), "typing Arabic letters in a text box does not change the speed"); } }
         m->reset(saved, keepPath);
     }
+    std::cout << "- redo shortcut, gaps (Clipchamp style), tint over clips" << std::endl;
+    {
+        // Ctrl+Y must be registered exactly once (a duplicate made Qt treat it as ambiguous and ignore it)
+        int owners = 0; QAction *redoAct = nullptr; bool distinct = true;
+        for (QAction *ac : w.findChildren<QAction *>()) if (ac->shortcuts().contains(QKeySequence("Ctrl+Y"))) { ++owners; redoAct = ac; QList<QKeySequence> l = ac->shortcuts(); for (int i = 0; i < l.size(); ++i) for (int j = i + 1; j < l.size(); ++j) if (l[i] == l[j]) distinct = false; }
+        CHECK(owners == 1 && distinct && redoAct && redoAct->shortcuts().size() >= 2, QString("Ctrl+Y belongs to exactly one action with distinct shortcuts (%1 owners)").arg(owners));
+        Project saved = m->project(); const QString keepPath = m->filePath();
+        MediaItem v0; for (auto &mi : saved.media) if (mi.kind == "video") v0 = mi;
+        Project proj = Project::singleClip(v0, 0, 2); proj.tracks.clear(); proj.ensureDefaultTracks();
+        QString v1id; int v1idx = 0; for (int i = 0; i < proj.tracks.size(); ++i) if (proj.tracks[i].name == "Video 1") { v1id = proj.tracks[i].id; v1idx = i; }
+        proj.clips.clear();
+        const double starts[] = {0, 5, 10}; int n = 0;
+        for (double st : starts) { Clip c; c.id = QString("g%1").arg(n++); c.mediaId = v0.id; c.trackId = v1id; c.start = st; c.in = 0; c.out = 2; proj.clips.push_back(c); }
+        m->reset(proj, QString());
+        w.timeline()->verticalScrollBar()->setValue(0); w.timeline()->zoomFit(); QTest::qWait(250);
+        QWidget *vp = w.timeline()->viewport();
+        auto X = [&](double t) { return int(170 + t * w.timeline()->zoom() - w.timeline()->horizontalScrollBar()->value()); };
+        int top = 30; for (int i = 0; i < v1idx; ++i) top += m->project().tracks[i].height;
+        const int cy = top + m->project().tracks[v1idx].height / 2;
+        // ---- gap: hover + click the bin button
+        CHECK(m->project().gapsOnTrack(v1id).size() == 2, "two gaps (2-5 s and 7-10 s)");
+        QTest::mouseMove(vp, QPoint(X(3.5), cy)); QTest::qWait(100);
+        QImage hov = vp->grab().toImage();
+        QTest::mouseMove(vp, QPoint(X(0.9), cy)); QTest::qWait(100);             // not hovering a gap: the bin disappears
+        QImage nohov = vp->grab().toImage();
+        hov.save("/tmp/mveditor_gap.png");
+        int differ = 0; for (int y = cy - 14; y <= cy + 14; ++y) for (int x = X(3.5) - 14; x <= X(3.5) + 14; ++x) if (hov.pixelColor(x, y) != nohov.pixelColor(x, y)) ++differ;
+        CHECK(differ > 150, QString("hovering a gap shows a delete (bin) button (%1 changed pixels)").arg(differ));
+        QTest::mouseMove(vp, QPoint(X(3.5), cy)); QTest::qWait(60);
+        QTest::mouseClick(vp, Qt::LeftButton, Qt::NoModifier, QPoint(X(3.5), cy)); QTest::qWait(100);
+        CHECK(near(m->project().clipById("g1")->start, 2.0, 1e-6) && near(m->project().clipById("g2")->start, 7.0, 1e-6) && near(m->project().clipById("g0")->start, 0.0, 1e-6), QString("clicking the bin deleted the gap: later clips moved back (g1 at %1, g2 at %2)").arg(m->project().clipById("g1")->start).arg(m->project().clipById("g2")->start));
+        m->undoStack()->undo();
+        CHECK(near(m->project().clipById("g1")->start, 5.0, 1e-6), "deleting a gap can be undone");
+        w.timeline()->deleteAllGaps(v1id);
+        CHECK(near(m->project().clipById("g1")->start, 2.0, 1e-6) && near(m->project().clipById("g2")->start, 4.0, 1e-6), "Delete all gaps packs the track");
+        m->undoStack()->undo();
+        // ---- marker tint is drawn OVER the clips
+        m->mutate("pair", [&](Project &p) { Marker a; a.time = 0.2; a.trackId = v1id; a.color = "#39ff14"; Marker b; b.time = 1.9; b.trackId = v1id; p.markers.push_back(a); p.markers.push_back(b); });
+        QTest::mouseMove(vp, QPoint(X(3.5), 4)); QTest::qWait(150);           // pointer somewhere harmless
+        w.timeline()->setRegionsVisible(true); QTest::qWait(100);
+        const QColor on = vp->grab().toImage().pixelColor(X(1.7), cy);
+        w.timeline()->setRegionsVisible(false); QTest::qWait(100);
+        const QColor off = vp->grab().toImage().pixelColor(X(1.7), cy);
+        w.timeline()->setRegionsVisible(true); QTest::qWait(100);
+        w.grab().save("/tmp/mveditor_tint.png");
+        CHECK(on.green() > off.green() + 3, QString("the colour between Ma and Mp is visible on top of the clip (green %1 vs %2 without)").arg(on.green()).arg(off.green()));
+        m->undoStack()->undo();
+        // ---- Ctrl+Y really redoes (when the window is active)
+        m->mutate("tmp", [&](Project &p) { p.clipById("g1")->start = 6.0; });
+        m->undoStack()->undo();
+        if (QApplication::activeWindow()) { QTest::keyClick(&w, Qt::Key_Y, Qt::ControlModifier); QTest::qWait(60); CHECK(near(m->project().clipById("g1")->start, 6.0, 1e-6), "pressing Ctrl+Y redoes the change"); }
+        m->reset(saved, keepPath);
+    }
+    std::cout << "- source speed (Speed icon active while playing the source) and full screen" << std::endl;
+    {
+        auto *prev = w.findChild<PreviewMonitor *>();
+        QString vidId; for (auto &mi : m->project().media) if (mi.kind == "video") vidId = mi.id;
+        m->selectClip({});
+        prev->playSource(vidId); QTest::qWait(250);
+        CHECK(prev->mode() == PreviewMonitor::Mode::Source, "Source mode");
+        QAction *spd = w.findChild<QAction *>("speed");
+        CHECK(spd && spd->isEnabled() && w.findChild<QAction *>("speedup")->isEnabled(), "the Speed icon is active while the source is open, even with no clip selected");
+        if (QWidget *f = QApplication::focusWidget()) f->clearFocus();
+        auto press = [&](int key, const QString &text) { QKeyEvent ev(QEvent::KeyPress, key, Qt::NoModifier, text); QApplication::sendEvent(&w, &ev); };
+        press(Qt::Key_BracketRight, "]"); press(0x62F, QString::fromUtf8("\xd8\xaf"));
+        CHECK(near(prev->sourceSpeed(), 1.2, 1e-9), QString("] and د change the source preview speed (%1)").arg(prev->sourceSpeed()));
+        press(Qt::Key_BracketLeft, "["); CHECK(near(prev->sourceSpeed(), 1.1, 1e-9), "[ slows it down");
+        prev->setSourceSpeed(2.0); CHECK(near(prev->sourceSpeed(), 2.0, 1e-9), "speed can be set directly (dialog)");
+        prev->setSourceSpeed(40.0); CHECK(near(prev->sourceSpeed(), 16.0, 1e-9), "source speed is limited to 16x");
+        prev->playSource(vidId); CHECK(near(prev->sourceSpeed(), 1.0, 1e-9), "opening a source starts at normal speed");
+        // ---- full screen
+        prev->toggleFullscreen(); QTest::qWait(400);
+        FullscreenWindow *fs = prev->fullscreenWindow();
+        CHECK(fs && fs->isFullScreen() && prev->isFullscreen(), "the picture goes full screen");
+        CHECK(fs && fs->barVisible(), "the seek bar is shown when entering full screen");
+        QTest::qWait(3000);
+        CHECK(fs && !fs->barVisible(), "the seek bar hides itself after the mouse is idle");
+        if (fs) { QMouseEvent me(QEvent::MouseMove, QPointF(300, 300), QPointF(300, 300), Qt::NoButton, Qt::NoButton, Qt::NoModifier); QApplication::sendEvent(fs->viewport(), &me); QTest::qWait(150); }
+        CHECK(fs && fs->barVisible(), "moving the mouse brings the seek bar back");
+        if (fs) { QTest::keyClick(fs, Qt::Key_Escape); QTest::qWait(200); }
+        CHECK(!prev->isFullscreen(), "Esc leaves full screen");
+        QToolButton *tlb = nullptr; for (auto *b : prev->findChildren<QToolButton *>()) if (b->text() == "Timeline") tlb = b;
+        if (tlb) tlb->click();
+    }
     std::cout << "- Properties panel fits at minimum width (nothing cut off)" << std::endl;
     {
         w.resize(1366, 768);

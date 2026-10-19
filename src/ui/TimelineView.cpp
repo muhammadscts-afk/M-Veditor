@@ -75,7 +75,7 @@ QColor TimelineView::pairColor(const Project &p, const QString &trackId, int pai
     QColor c = pal[pairIndex % 6];
     const int first = 2 * pairIndex;
     if (first < idx.size()) { const QColor mc(p.markers[idx[first]].color); if (!p.markers[idx[first]].color.isEmpty() && mc.isValid()) c = mc; }
-    c.setAlpha(Theme::isDark() ? 22 : 30);        // the chosen colour is used as is (never mixed with an earlier one), only very transparent
+    c.setAlpha(Theme::isDark() ? 38 : 46);        // the chosen colour is used as is (never mixed with an earlier one), only very transparent
     return c;
 }
 
@@ -249,17 +249,6 @@ void TimelineView::paintStatic(QPainter &p) {
         p.fillRect(QRect(kHeaderW, top, viewport()->width() - kHeaderW, pr.tracks[i].height), (i % 2) ? Theme::trackB() : Theme::trackA());
         p.setPen(Theme::grid()); p.drawLine(0, top + pr.tracks[i].height - 1, viewport()->width(), top + pr.tracks[i].height - 1);
     }
-    // very transparent colour only BETWEEN the markers of a pair (Ma..Mp), only on the marker's own track
-    if (m_regions)
-        for (int i = 0; i < pr.tracks.size(); ++i) {
-            const int top = trackTop(i);
-            if (top + pr.tracks[i].height < kRulerH || top > viewport()->height()) continue;
-            const QVector<int> idx = pr.markerIndexesOnTrack(pr.tracks[i].id);
-            for (int k = 0; k + 1 < idx.size(); k += 2) {
-                const int x0 = std::max(kHeaderW, int(timeToX(pr.markers[idx[k]].time))), x1 = std::min(viewport()->width(), int(timeToX(pr.markers[idx[k + 1]].time)));
-                if (x1 > x0) p.fillRect(QRect(x0, top, x1 - x0, pr.tracks[i].height - 1), pairColor(pr, pr.tracks[i].id, k / 2));
-            }
-        }
     static const double steps[] = {0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800, 3600};
     double step = 3600;
     for (double s : steps) if (s * m_pps >= 80) { step = s; break; }
@@ -281,6 +270,16 @@ void TimelineView::paintStatic(QPainter &p) {
             Clip g = effective(*dc); g.trackId = m_ghostTrack; paintClip(p, g, i, true);
         }
     }
+    if (m_regions)                                                           // very transparent tint ON TOP of the clips, only between a pair (Ma..Mp), only on the marker's track
+        for (int i = 0; i < pr.tracks.size(); ++i) {
+            const int top = trackTop(i);
+            if (top + pr.tracks[i].height < kRulerH || top > viewport()->height()) continue;
+            const QVector<int> idx = pr.markerIndexesOnTrack(pr.tracks[i].id);
+            for (int k = 0; k + 1 < idx.size(); k += 2) {
+                const int x0 = std::max(kHeaderW, int(timeToX(pr.markers[idx[k]].time))), x1 = std::min(viewport()->width(), int(timeToX(pr.markers[idx[k + 1]].time)));
+                if (x1 > x0) p.fillRect(QRect(x0, top, x1 - x0, pr.tracks[i].height - 1), pairColor(pr, pr.tracks[i].id, k / 2));
+            }
+        }
     {   // marker lines and small flags, only inside their own track
         p.setClipRect(area);
         QFont mf = p.font(); mf.setPointSizeF(7.5); p.setFont(mf);
@@ -296,6 +295,14 @@ void TimelineView::paintStatic(QPainter &p) {
                 p.setPen(QColor(250, 210, 90)); p.drawText(x + 10, top, 40, 12, Qt::AlignLeft | Qt::AlignVCenter, pr.markerLabel(mi));
             }
         }
+        p.setClipping(false);
+    }
+    if (m_hoverGap.valid() && m_drag == Drag::None) {                        // Clipchamp-style gap: hatched area with a delete (bin) button
+        const int top = trackTop(m_hoverGap.track), h = pr.tracks[m_hoverGap.track].height;
+        const QRect gr(int(timeToX(m_hoverGap.start)), top + 2, std::max(2, int(timeToX(m_hoverGap.end)) - int(timeToX(m_hoverGap.start))), h - 5);
+        p.setClipRect(area);
+        p.setPen(QPen(QColor(255, 255, 255, 120), 1, Qt::DashLine)); p.setBrush(QBrush(QColor(255, 255, 255, 38), Qt::BDiagPattern)); p.drawRect(gr);
+        paintTrash(p, gapButton(m_hoverGap));
         p.setClipping(false);
     }
     if (m_dropActive) {
@@ -407,6 +414,7 @@ QString TimelineView::headerButtonTip(const QPoint &pt) const {
 }
 
 bool TimelineView::viewportEvent(QEvent *e) {
+    if (e->type() == QEvent::Leave && m_hoverGap.valid()) { m_hoverGap = Gap(); invalidate(); }
     if (e->type() == QEvent::ToolTip) {
         auto *he = static_cast<QHelpEvent *>(e);
         const QString tip = headerButtonTip(he->pos());
@@ -447,6 +455,45 @@ double TimelineView::snapTime(double t, double dur, const QString &ignore, bool 
         if (useEnd && std::fabs(q - (t + dur)) < bestD) { bestD = std::fabs(q - (t + dur)); best = q - dur; }
     }
     return std::max(0.0, best);
+}
+
+TimelineView::Gap TimelineView::gapAt(const QPoint &pt) const {
+    Gap g;
+    if (pt.x() < kHeaderW || pt.y() < kRulerH) return g;
+    const int ti = trackAt(pt.y());
+    if (ti < 0) return g;
+    const double t = xToTime(pt.x());
+    for (const Project::Gap &pg : m->project().gapsOnTrack(m->project().tracks[ti].id))
+        if (t >= pg.start && t < pg.end) { g.track = ti; g.start = pg.start; g.end = pg.end; break; }
+    return g;
+}
+QRect TimelineView::gapButton(const Gap &g) const {
+    const int x0 = int(timeToX(g.start)), x1 = int(timeToX(g.end));
+    const int cx = std::clamp((x0 + x1) / 2, kHeaderW + 14, viewport()->width() - 14);
+    return QRect(cx - 13, trackTop(g.track) + m->project().tracks[g.track].height / 2 - 13, 26, 26);
+}
+void TimelineView::paintTrash(QPainter &p, const QRect &r) {
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setPen(Qt::NoPen); p.setBrush(QColor(214, 64, 64, 235)); p.drawRoundedRect(r, 5, 5);
+    p.setPen(QPen(Qt::white, 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin)); p.setBrush(Qt::NoBrush);
+    const QPointF c = r.center();
+    p.drawLine(QPointF(c.x() - 6, c.y() - 5), QPointF(c.x() + 6, c.y() - 5));                       // lid
+    p.drawLine(QPointF(c.x() - 2, c.y() - 7), QPointF(c.x() + 2, c.y() - 7));                       // handle
+    p.drawRect(QRectF(c.x() - 4.5, c.y() - 3.5, 9, 10));                                           // bin
+    p.drawLine(QPointF(c.x() - 1.5, c.y() - 1), QPointF(c.x() - 1.5, c.y() + 4)); p.drawLine(QPointF(c.x() + 1.5, c.y() - 1), QPointF(c.x() + 1.5, c.y() + 4));
+    p.restore();
+}
+void TimelineView::deleteGap(const QString &trackId, double start, double end) {
+    m->mutate(tr("Delete gap"), [trackId, start, end](Project &p) { p.closeGap(trackId, start, end); });
+    m_hoverGap = Gap();
+    emit message(tr("Gap deleted (%1 s). The clips after it on this track moved back.").arg(QString::number(end - start, 'f', 1)));
+}
+void TimelineView::deleteAllGaps(const QString &trackId) {
+    const int n = m->project().gapsOnTrack(trackId).size();
+    m->mutate(tr("Delete all gaps"), [trackId](Project &p) { p.closeAllGaps(trackId); });
+    m_hoverGap = Gap();
+    emit message(n ? tr("%1 gap(s) deleted on this track.").arg(n) : tr("This track has no gaps."));
 }
 
 void TimelineView::toggleTrackFlag(int ti, int which, bool additive) {
@@ -492,6 +539,8 @@ void TimelineView::mousePressEvent(QMouseEvent *e) {
     if (e->button() == Qt::RightButton && pt.x() >= kHeaderW) {
         const int mi = markerAt(pt);
         if (mi >= 0) { emit markerContextMenu(mi, e->globalPosition().toPoint()); return; }
+        const Gap g = gapAt(pt);
+        if (g.valid()) { m->setActiveTrack(pr.tracks[g.track].id); emit gapContextMenu(pr.tracks[g.track].id, g.start, g.end, xToTime(pt.x()), e->globalPosition().toPoint()); return; }
     }
     if (pt.y() < kRulerH) {
         if (pt.x() < kHeaderW) return;
@@ -512,6 +561,10 @@ void TimelineView::mousePressEvent(QMouseEvent *e) {
         if (pt.y() > trackTop(ti) + t.height - 6) { m_drag = Drag::TrackHeight; m_resizeTrack = ti; m_resizeOrigH = t.height; return; }
         m_drag = Drag::TrackMove; m_moveFrom = ti; m_moveIns = -1;
         return;
+    }
+    if (e->button() == Qt::LeftButton) {                                    // the bin button of a gap
+        const Gap g = gapAt(pt);
+        if (g.valid() && gapButton(g).contains(pt)) { deleteGap(pr.tracks[g.track].id, g.start, g.end); return; }
     }
     const Hit h = hitTest(pt);
     const bool ctrl = e->modifiers() & Qt::ControlModifier, shift = e->modifiers() & Qt::ShiftModifier;
@@ -547,11 +600,13 @@ void TimelineView::mouseMoveEvent(QMouseEvent *e) {
     const QPoint pt = e->pos();
     const Project &pr = m->project();
     if (m_drag == Drag::None) {
+        const Gap g = gapAt(pt);                                            // hovering a gap shows its delete button
+        if (!g.same(m_hoverGap)) { m_hoverGap = g; invalidate(); }
         const Hit h = hitTest(pt);
         if (pt.x() < kHeaderW && pt.y() >= kRulerH) {
             const int ti = trackAt(pt.y());
             viewport()->setCursor(ti >= 0 && pt.y() > trackTop(ti) + pr.tracks[ti].height - 6 ? Qt::SplitVCursor : Qt::ArrowCursor);
-        } else viewport()->setCursor(h.zone && m->selectedClips().size() <= 1 ? Qt::SizeHorCursor : Qt::ArrowCursor);
+        } else viewport()->setCursor(g.valid() && gapButton(g).contains(pt) ? Qt::PointingHandCursor : (h.zone && m->selectedClips().size() <= 1 ? Qt::SizeHorCursor : Qt::ArrowCursor));
         return;
     }
     if (m_drag == Drag::Playhead) { m->setPlayhead(snapTime(xToTime(std::max(pt.x(), kHeaderW)), 0, {}, false)); return; }

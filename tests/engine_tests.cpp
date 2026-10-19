@@ -310,6 +310,20 @@ int main(int argc, char **argv) {
         CHECK(back.title.italic && back.title.outline && back.title.caps && back.title.fontFamily == "DejaVu Sans" && back.title.shadow, QString("title style survives save/load"));
     }
 
+    section("gaps: found before/between clips, closed one by one or all at once, other tracks untouched");
+    {
+        Project p = newProject(v1);
+        clip(p, v1, trackV1, 1.0, 0, 2); clip(p, v1, trackV1, 5.0, 0, 2); clip(p, v1, trackV1, 7.0, 0, 1);
+        auto other = clip(p, v1, trackV2, 10.0, 0, 1);
+        const auto g = p.gapsOnTrack(trackV1);
+        CHECK(g.size() == 2 && near(g[0].start, 0, 1e-9) && near(g[0].end, 1, 1e-9) && near(g[1].start, 3, 1e-9) && near(g[1].end, 5, 1e-9), QString("gaps before the first clip and between clips are found (no gap where clips touch)"));
+        Project a = p; a.closeGap(trackV1, 3, 5);
+        CHECK(near(a.clips[1].start, 3, 1e-9) && near(a.clips[2].start, 5, 1e-9) && near(a.clips[0].start, 1, 1e-9) && a.gapsOnTrack(trackV1).size() == 1, QString("closing one gap moves only the later clips back"));
+        Project b = p; b.closeAllGaps(trackV1);
+        CHECK(near(b.clips[0].start, 0, 1e-9) && near(b.clips[1].start, 2, 1e-9) && near(b.clips[2].start, 4, 1e-9) && b.gapsOnTrack(trackV1).isEmpty(), QString("close all gaps packs the clips of the track"));
+        CHECK(near(b.clipById(other.id)->start, 10, 1e-9), QString("other tracks are not touched"));
+    }
+
     section("markers: per track, time-ordered Ma/Mp naming, colours, old projects");
     {
         Project p = newProject(v1);

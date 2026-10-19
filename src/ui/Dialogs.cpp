@@ -57,7 +57,7 @@ SpeedDialog::SpeedDialog(double cur, double srcSec, bool hasAudio, bool pitch, b
     m_mute = new QRadioButton(tr("Mute the clip's audio"));
     m_detach = new QRadioButton(tr("Detach audio to an audio track (keeps its original speed)"));
     gl->addWidget(m_pitch); gl->addWidget(m_keep); gl->addWidget(m_mute); gl->addWidget(m_detach);
-    g->setEnabled(hasAudio);
+    g->setEnabled(hasAudio); m_audioGroup = g;
     lay->addWidget(g);
     auto *bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel); lay->addWidget(bb);
     connect(bb, &QDialogButtonBox::accepted, this, &QDialog::accept);
@@ -70,6 +70,7 @@ void SpeedDialog::updateInfo() {
     m_info->setText(tr("%1 → <b>%2</b> on the timeline  (%3)").arg(humanTime(m_src, true), humanTime(m_src / s, true),
                     s < 0.999 ? tr("slow motion") : s > 1.001 ? tr("fast motion") : tr("normal speed")));
 }
+void SpeedDialog::setSourceMode() { m_rev->hide(); m_audioGroup->hide(); setWindowTitle(tr("Preview speed (source)")); adjustSize(); }
 double SpeedDialog::speed() const { return m_spin->value(); }
 bool SpeedDialog::preservePitch() const { return m_pitch->isChecked(); }
 bool SpeedDialog::reverse() const { return m_rev->isChecked(); }

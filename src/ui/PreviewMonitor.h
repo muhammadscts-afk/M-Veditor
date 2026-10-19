@@ -13,6 +13,7 @@
 #include <QGraphicsView>
 #include <QLabel>
 #include <QMediaPlayer>
+#include <QKeyEvent>
 #include <QMouseEvent>
 #include <QSlider>
 #include <QStyle>
@@ -47,6 +48,32 @@ private:
     bool m_down = false;
 };
 
+// Full-screen picture with a seek bar that appears when the mouse moves and hides again when it is idle (like other media players).
+class FullscreenWindow : public QWidget {
+    Q_OBJECT
+public:
+    explicit FullscreenWindow(QGraphicsScene *scene);
+    SeekSlider *slider = nullptr;
+    QLabel *time = nullptr;
+    QToolButton *play = nullptr;
+    bool barVisible() const { return m_bar->isVisible(); }
+    QWidget *viewport() const { return m_view->viewport(); }
+    void showBar();
+signals:
+    void exitRequested();
+    void togglePlayRequested();
+protected:
+    void keyPressEvent(QKeyEvent *) override;
+    void resizeEvent(QResizeEvent *) override;
+    void closeEvent(QCloseEvent *) override;
+    bool eventFilter(QObject *, QEvent *) override;
+private:
+    void hideBar();
+    QGraphicsView *m_view = nullptr;
+    QWidget *m_bar = nullptr;
+    QTimer m_hide;
+};
+
 class PreviewMonitor : public QWidget {
     Q_OBJECT
 public:
@@ -66,6 +93,13 @@ public:
     Mode mode() const { return m_mode; }
     bool liveEnabled() const { return m_live->isChecked(); }
     void releaseMedia();
+    // Source mode: preview speed of the library item (pitch preserved)
+    void setSourceSpeed(double s);
+    double sourceSpeed() const { return m_srcSpeed; }
+    QString sourceId() const { return m_sourceId; }
+    void toggleFullscreen();
+    bool isFullscreen() const { return m_fs != nullptr; }
+    FullscreenWindow *fullscreenWindow() const { return m_fs; }
     void showBusy(const QString &text);
 signals:
     void renderPreviewRequested();
@@ -73,7 +107,9 @@ signals:
     void stopPressed();
     void addToTimelineRequested(const QString &mediaId, double in, double out);
     void message(const QString &text);
+    void modeChanged();
 protected:
+    bool eventFilter(QObject *o, QEvent *e) override;
     void resizeEvent(QResizeEvent *) override;
     void showEvent(QShowEvent *) override;
 private:
@@ -99,6 +135,10 @@ private:
     void syncVoices(double t, bool play);
     void ensureVoices();
     void releaseLive();
+    void syncSourceAudio();
+    void updateBadge();
+    void enterFullscreen();
+    void exitFullscreen();
     void stopPitch();
     double pitchAudioFor(const Clip &c, const MediaItem &mi, double t, bool play, double vol);   // returns the volume for the deck's own audio
     const Clip *nextVideoClip(double after) const;
@@ -120,7 +160,11 @@ private:
     QGraphicsRectItem *m_canvas;
     QGraphicsVideoItem *m_video;                 // the ACTIVE deck's picture
     QGraphicsPixmapItem *m_image;
-    QGraphicsSimpleTextItem *m_busy, *m_note;
+    QGraphicsSimpleTextItem *m_busy, *m_note, *m_badge;
+    double m_srcSpeed = 1.0;
+    QTimer m_srcTimer, m_fsSync;
+    FullscreenWindow *m_fs = nullptr;
+    QToolButton *m_fsBtn = nullptr;
     QVector<QGraphicsItem *> m_titleItems;
     QString m_titleKey;
     QMediaPlayer *m_player;                      // the ACTIVE deck's player (swapped with m_pre on gap-free cuts)

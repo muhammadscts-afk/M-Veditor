@@ -51,8 +51,8 @@ On Ubuntu 24.04: `sudo apt install qt6-base-dev qt6-multimedia-dev cmake ninja-b
 ## Tests
 
 ```bash
-./build/engine_tests                          # ~132 checks, renders real media with FFmpeg and inspects the output
-QT_QPA_PLATFORM=offscreen ./build/gui_smoke   # ~97 checks driving the real window; writes /tmp/mveditor_ui.png
+./build/engine_tests                          # ~136 checks, renders real media with FFmpeg and inspects the output
+QT_QPA_PLATFORM=offscreen ./build/gui_smoke   # ~116 checks driving the real window; writes /tmp/mveditor_ui.png
 "./build/M Veditor" --selftest                # headless packaged-app check (exit code 0 = OK, log in selftest.log)
 ```
 

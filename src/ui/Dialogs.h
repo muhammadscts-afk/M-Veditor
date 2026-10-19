@@ -24,6 +24,7 @@ class SpeedDialog : public QDialog {
 public:
     enum AudioMode { KeepAudio, MuteAudio, DetachAudio };
     SpeedDialog(double currentSpeed, double sourceSeconds, bool hasAudio, bool preservePitch, bool reversed, QWidget *parent = nullptr);
+    void setSourceMode();                    // plain preview speed: hides reverse and audio options
     double speed() const;
     bool preservePitch() const;
     bool reverse() const;
@@ -34,6 +35,7 @@ private:
     QCheckBox *m_pitch, *m_rev;
     QRadioButton *m_keep, *m_mute, *m_detach;
     QLabel *m_info;
+    QWidget *m_audioGroup = nullptr;
     double m_src;
 };
 

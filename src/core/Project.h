@@ -135,6 +135,11 @@ public:
     // Everything that influences the rendered result - deliberately excludes markers, names, track heights, locks.
     QByteArray renderSignature() const;
     bool trackVisible(const Track &t) const;
+    // Gaps: empty time on a track (before the first clip and between clips). Closing a gap slides the later clips of that track back.
+    struct Gap { double start = 0, end = 0; };
+    QVector<Gap> gapsOnTrack(const QString &trackId) const;
+    void closeGap(const QString &trackId, double start, double end);
+    void closeAllGaps(const QString &trackId);
     int usageCount(const QString &mediaId) const;
     // Markers belong to one track each. They are sorted by time and used in pairs: 1st+2nd, 3rd+4th, ... (Ma, Mp, Ma, Mp ...).
     QString markerTrack(const Marker &m) const;

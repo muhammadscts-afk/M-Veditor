@@ -75,6 +75,22 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     connect(m_tl, &TimelineView::trackContextMenu, this, &MainWindow::showTrackMenu);
     connect(m_tl, &TimelineView::message, this, [this](const QString &t) { notify(t); });
     connect(m_tl, &TimelineView::rulerContextMenu, this, [this](double t, const QPoint &gp) { showMarkerMenu(-1, t, gp); });
+    connect(m_tl, &TimelineView::gapContextMenu, this, [this](const QString &trackId, double st, double en, double t, const QPoint &gp) {
+        const Track *trk = m->project().trackById(trackId);
+        if (!trk) return;
+        QMenu menu(this);
+        menu.addAction(tr("Delete this gap (%1 s)").arg(QString::number(en - st, 'f', 1)), [this, trackId, st, en] { m_tl->deleteGap(trackId, st, en); });
+        menu.addAction(tr("Delete all gaps in %1").arg(trk->name), [this, trackId] { m_tl->deleteAllGaps(trackId); });
+        menu.addSeparator();
+        if (trk->type == TrackType::Title) {
+            menu.addAction(tr("Add title here"), [this, t, trackId] { addTitle("title", t, trackId); });
+            menu.addAction(tr("Add subtitle here"), [this, t, trackId] { addTitle("subtitle", t, trackId); });
+            menu.addAction(tr("Add caption here"), [this, t, trackId] { addTitle("caption", t, trackId); });
+        }
+        menu.addAction(tr("Paste here"), [this, t] { pasteClip(t); })->setEnabled(!m_clipboard.isEmpty());
+        menu.addAction(tr("Add marker here"), [this, t, trackId] { addMarker(t, trackId); });
+        menu.exec(gp);
+    });
     connect(m_tl, &TimelineView::markerContextMenu, this, [this](int idx, const QPoint &gp) { showMarkerMenu(idx, m->project().markers[idx].time, gp); });
     connect(m_lib, &MediaLibrary::importRequested, a["import"], &QAction::trigger);
     connect(m_lib, &MediaLibrary::filesDropped, this, &MainWindow::importFiles);
@@ -112,6 +128,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         menu.addAction(tr("Add marker here"), [this, t, trackId] { addMarker(t, trackId); });
         menu.exec(gp);
     });
+    connect(m_prev, &PreviewMonitor::modeChanged, this, &MainWindow::updateActions);
     connect(m_prev, &PreviewMonitor::stopPressed, this, [this] { if (busy() && m_kind == JobKind::Preview) m_job->cancel(); });
     connect(m_tl, &TimelineView::addTrackRequested, this, [this](int t) { addTrack(TrackType(t)); });
     connect(m_prev, &PreviewMonitor::message, this, [this](const QString &t) { notify(t); });
@@ -296,6 +313,7 @@ void MainWindow::buildActions() {
         QMessageBox::information(this, tr("Layout"), tr("The default layout will be used the next time you start M Veditor."));
     });
 
+    add("fullscreen", tr("Full screen preview\tF11"), QKeySequence(Qt::Key_F11), [this] { m_prev->toggleFullscreen(); }, tr("Show the picture full screen (Esc exits)"));
     add("play", tr("Play / Pause"), QKeySequence(Qt::Key_Space), [this] { m_prev->togglePlay(); });
     // The arrow / bracket / comma / period keys are handled in eventFilter() so they also work with the Arabic keyboard layout.
     add("nextframe", tr("Next frame\tUp"), {}, [this] { m_prev->stepFrame(1); });
@@ -337,8 +355,9 @@ void MainWindow::buildMenus() {
     auto *edit = menuBar()->addMenu(tr("&Edit"));
     edit->addAction(m->undoStack()->createUndoAction(this, tr("&Undo")));
     edit->addAction(m->undoStack()->createRedoAction(this, tr("&Redo")));
-    auto *undo = edit->actions().at(0); undo->setShortcut(QKeySequence::Undo);
-    auto *redo = edit->actions().at(1); redo->setShortcuts({QKeySequence::Redo, QKeySequence("Ctrl+Y")});
+    auto *undo = edit->actions().at(0); undo->setShortcut(QKeySequence("Ctrl+Z"));
+    auto *redo = edit->actions().at(1);
+    redo->setShortcuts({QKeySequence("Ctrl+Y"), QKeySequence("Ctrl+Shift+Z")});          // two DIFFERENT keys (QKeySequence::Redo is Ctrl+Y on Windows: listing it twice made the shortcut "ambiguous" and dead)
     edit->addSeparator();
     for (auto *k : {"cut", "copy", "paste", "dup", "selectall"}) edit->addAction(a[k]);
     edit->addSeparator();
@@ -378,7 +397,7 @@ void MainWindow::buildMenus() {
     for (auto *d : {m_dockLib, m_dockProps, m_dockExp, m_dockLog}) view->addAction(d->toggleViewAction());
     view->addSeparator(); view->addAction(a["resetlayout"]);
     view->addSeparator();
-    for (auto *k : {"play", "nextframe", "prevframe", "fwd5", "back5", "fwd1", "back1", "home", "end", "prevedge", "nextedge"}) view->addAction(a[k]);
+    for (auto *k : {"fullscreen", "play", "nextframe", "prevframe", "fwd5", "back5", "fwd1", "back1", "home", "end", "prevedge", "nextedge"}) view->addAction(a[k]);
 
     auto *ex = menuBar()->addMenu(tr("E&xport"));
     for (auto *k : {"exportv", "exporta", "exportnow", "preview", "extract"}) ex->addAction(a[k]);
@@ -409,7 +428,9 @@ void MainWindow::updateActions() {
     const MediaItem *mi = has && !c->isTitle() ? m->project().mediaById(c->mediaId) : nullptr;
     const bool videoish = has && mi && mi->hasVideo;
     for (auto *k : {"copy", "cut", "dup", "delete", "ripple", "fx_reset"}) a[k]->setEnabled(has);
-    for (auto *k : {"speed", "reverse"}) a[k]->setEnabled(has && !c->isTitle());
+    const bool srcMode = m_prev->mode() == PreviewMonitor::Mode::Source;      // playing a library item: the speed controls work on the preview
+    a["reverse"]->setEnabled(has && !c->isTitle());
+    for (auto *k : {"speed", "speedup", "speeddown"}) a[k]->setEnabled(srcMode || (has && !c->isTitle()));
     for (auto *k : {"rot", "fliph", "flipv", "pip"}) a[k]->setEnabled(videoish);
     for (auto *k : {"detach", "mute", "normalize", "silence", "fade1"}) a[k]->setEnabled(has && mi && mi->hasAudio);
     a["paste"]->setEnabled(!m_clipboard.isEmpty());
@@ -821,6 +842,12 @@ SpeedAnchor captureAnchor(const Project &p, const QStringList &ids, const QStrin
 }
 
 void MainWindow::stepSpeed(int dir) {
+    if (m_prev->mode() == PreviewMonitor::Mode::Source) {
+        const double ns = std::clamp(std::round((m_prev->sourceSpeed() + dir * 0.1) * 10.0) / 10.0, 0.1, 16.0);
+        if (std::fabs(ns - m_prev->sourceSpeed()) < 1e-9) { notify(tr("The preview speed is already at its limit (%1×).").arg(ns)); return; }
+        m_prev->setSourceSpeed(ns); notify(tr("Source preview speed %1×").arg(QString::number(ns, 'f', 1)));
+        return;
+    }
     const QStringList ids = m->selectedClips();
     const Clip *c = m->project().clipById(m->selectedClip());
     if (ids.isEmpty() || !c) { notify(tr("Select a clip first, then press ] (د) to speed up or [ (ج) to slow down by 0.1×.")); return; }
@@ -848,6 +875,16 @@ void MainWindow::stepSpeed(int dir) {
 bool MainWindow::eventFilter(QObject *obj, QEvent *ev) {
     if (ev->type() != QEvent::KeyPress) return QMainWindow::eventFilter(obj, ev);
     auto *ke = static_cast<QKeyEvent *>(ev);
+#ifdef Q_OS_WIN
+    if ((ke->modifiers() & Qt::ControlModifier) && !(ke->modifiers() & (Qt::AltModifier | Qt::MetaModifier)) && !(ke->key() >= Qt::Key_A && ke->key() <= Qt::Key_Z)) {
+        QWidget *tf = QApplication::focusWidget();                          // other keyboard layout (e.g. Arabic): Ctrl+Y / Ctrl+Z by physical key
+        if (!(tf && (tf->inherits("QLineEdit") || tf->inherits("QPlainTextEdit") || tf->inherits("QTextEdit") || tf->inherits("QAbstractSpinBox")))) {
+            const quint32 v = ke->nativeVirtualKey();
+            if (v == 0x59) { m->undoStack()->redo(); return true; }
+            if (v == 0x5A) { if (ke->modifiers() & Qt::ShiftModifier) m->undoStack()->redo(); else m->undoStack()->undo(); return true; }
+        }
+    }
+#endif
     if (ke->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier)) return false;
     QWidget *fw = QApplication::focusWidget();                                      // never steal keys from text / number entry
     if (fw && (fw->inherits("QLineEdit") || fw->inherits("QPlainTextEdit") || fw->inherits("QTextEdit") || fw->inherits("QAbstractSpinBox") || fw->inherits("QComboBox") || fw->inherits("QAbstractItemView"))) return false;
@@ -873,6 +910,13 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *ev) {
 }
 
 void MainWindow::applySpeedDialog() {
+    if (m_prev->mode() == PreviewMonitor::Mode::Source) {                    // playing the source: change its preview speed
+        const MediaItem *smi = m->project().mediaById(m_prev->sourceId());
+        SpeedDialog sd(m_prev->sourceSpeed(), smi ? smi->duration : 0.0, false, true, false, this);
+        sd.setSourceMode();
+        if (sd.exec() == QDialog::Accepted) { m_prev->setSourceSpeed(sd.speed()); notify(tr("Source preview speed %1×").arg(QString::number(m_prev->sourceSpeed(), 'f', 1))); }
+        return;
+    }
     const Clip *c = m->project().clipById(m->selectedClip());
     if (!c || c->isTitle()) { notify(tr("Select a clip on the timeline first.")); return; }
     const MediaItem *mi = m->project().mediaById(c->mediaId);

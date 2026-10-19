@@ -180,6 +180,20 @@ QByteArray Project::renderSignature() const {
     o["c"] = c;
     return QJsonDocument(o).toJson(QJsonDocument::Compact);
 }
+QVector<Project::Gap> Project::gapsOnTrack(const QString &trackId) const {
+    QVector<Gap> g; double prev = 0;
+    for (const Clip *c : clipsOnTrack(trackId)) { if (c->start - prev > 0.02) g.push_back({prev, c->start}); prev = std::max(prev, c->end()); }
+    return g;
+}
+void Project::closeGap(const QString &trackId, double start, double end) {
+    const double len = end - start;
+    if (len <= 0) return;
+    for (Clip &c : clips) if (c.trackId == trackId && c.start >= end - 1e-6) c.start = std::max(0.0, c.start - len);
+}
+void Project::closeAllGaps(const QString &trackId) {
+    double pos = 0;
+    for (const Clip *cp : clipsOnTrack(trackId)) { Clip *c = clipById(cp->id); c->start = pos; pos = c->end(); }
+}
 QString Project::markerTrack(const Marker &m) const { return m.trackId.isEmpty() ? firstTrackOfType(TrackType::Video) : m.trackId; }
 QVector<int> Project::markerIndexesOnTrack(const QString &trackId) const {
     QVector<int> v;

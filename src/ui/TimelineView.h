@@ -5,6 +5,7 @@
 #include <QHash>
 #include <QPixmap>
 #include <QToolButton>
+#include <cmath>
 
 namespace mv {
 
@@ -20,6 +21,8 @@ public:
     bool snapping() const { return m_snap; }
     void setRegionsVisible(bool on) { m_regions = on; invalidate(); }
     bool regionsVisible() const { return m_regions; }
+    void deleteGap(const QString &trackId, double start, double end);
+    void deleteAllGaps(const QString &trackId);
     static bool compatible(const Clip &c, const MediaItem *m, const Track &t);
     static QColor pairColor(const Project &p, const QString &trackId, int pairIndex);   // very transparent tint between a Ma/Mp pair
 
@@ -29,6 +32,7 @@ signals:
     void trackContextMenu(const QString &trackId, const QPoint &globalPos);
     void rulerContextMenu(double time, const QPoint &globalPos);
     void addTrackRequested(int trackType);
+    void gapContextMenu(const QString &trackId, double start, double end, double time, const QPoint &globalPos);
     void markerContextMenu(int markerIndex, const QPoint &globalPos);   // right-click on a marker head
     void laneContextMenu(const QString &trackId, double time, const QPoint &globalPos);   // right-click on an empty part of a track
     void message(const QString &text);
@@ -62,6 +66,10 @@ private:
     QString headerButtonTip(const QPoint &p) const;
     Hit hitTest(const QPoint &p) const;
     int markerAt(const QPoint &p) const;
+    struct Gap { int track = -1; double start = 0, end = 0; bool valid() const { return track >= 0; } bool same(const Gap &o) const { return track == o.track && std::fabs(start - o.start) < 1e-9 && std::fabs(end - o.end) < 1e-9; } };
+    Gap gapAt(const QPoint &p) const;
+    QRect gapButton(const Gap &g) const;
+    void paintTrash(QPainter &p, const QRect &r);
     Clip effective(const Clip &c) const;
     double snapTime(double t, double dur, const QString &ignoreClip, bool useEnd = true) const;
     void updateScrollBars();
@@ -93,6 +101,7 @@ private:
     double m_dropStart = 0, m_dropDur = 0;
     QString m_dropTrack;
     QHash<QString, QPixmap> m_thumbCache;
+    Gap m_hoverGap;
 };
 
 } // namespace mv

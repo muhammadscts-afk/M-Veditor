@@ -51,10 +51,16 @@ The controls under the picture are on one line (play controls and time on the le
 * **M (Mute)** silences the track. **S (Solo)** means *"listen to this track only"*: clicking S on a track soloes it and **switches off the S of every other track**, so only one track is solo at a time (Ctrl+click S to solo several tracks). While a track is soloed every other track is silent (preview and export). On a video or title track Solo also shows only the soloed picture tracks. Click S again to turn it off – the track header says "silent (solo)" for tracks that are being skipped. **L (Lock)** protects a track's clips. **H (Hide)** hides a track's picture only – its sound keeps playing in the preview and the export. In live playback M and S also silence the video's own sound immediately.
 * Hover any button for a tip. Right-click a header to rename, set track volume, change height, move or delete. Drag the lower edge of a header to resize the track.
 
+### Gaps (empty spaces on a track)
+When you cut segments and move them, empty spaces ("gaps") stay behind – before the first clip of a track and between clips. Like in Clipchamp:
+* **Hover a gap** with the mouse: it is shown hatched with a red **bin button** in the middle. **Click the bin** to delete the gap – the clips after it on that track slide back to close it (other tracks are not touched). Ctrl+Z undoes it.
+* **Right-click a gap** for **Delete this gap** or **Delete all gaps in <track>**, which packs all clips of that track one after another from the start of the track.
+
 ### Markers and colour between them
 * **Markers belong to one track.** The *active track* is the one you clicked last (its header gets a blue bar). Press **M** to drop a marker at the playhead on the active track, or right-click the ruler / an empty spot of a track ▸ **Add marker here**. You can have markers on as many tracks as you like; each marker's line and tint appear **only on its own track**.
 * **Pairs:** on each track the markers are used in pairs in time order: the 1st and 2nd (**Ma**, **Mp**), the 3rd and 4th (**Ma**, **Mp**), and so on. The area **between the two markers of a pair** is tinted with a very transparent colour. Nothing is tinted between pairs (between Mp and the next Ma), before the first marker, or after a last unpaired Ma – that one waits for its Mp.
 * **Names** are automatic (Ma, Mp, Ma, Mp …) and follow the time order, so they always make sense even if you add a marker earlier on the track. Use *Rename…* for a custom name.
+* The colour is drawn as a transparent layer **on top of the clips** between Ma and Mp (only on that marker's track), so you can see it over the video too.
 * **Right-click a marker head** (the little flag on the track or on the ruler) to rename or delete it or to pick the colour of its pair: **bright green, bright yellow, bright orange, bright light blue**, pink, violet, red, *Other colour…* or *Automatic*. A new colour replaces the old one completely – colours are never mixed.
 * Turn the tint off in **View ▸ Colour regions between markers** (the marker lines stay).
 
@@ -89,6 +95,10 @@ The speed is applied to the real picture and sound during export – it is not j
 Original audio files are never overwritten. Exports never replace an existing file without asking.
 
 ## 6. Previewing your edit
+
+* **Full screen:** click the small dotted-rectangle icon at the bottom right of the picture (or press **F11**). In full screen the seek bar, play button and time appear when you move the mouse and hide again after about 2.5 seconds of stillness (the mouse pointer hides too). Click or drag the bar to seek, **Space** plays/pauses, the arrow and comma/period keys work as usual, **Esc** or a double click leaves full screen.
+* **Speed while playing the source:** open a library item (double-click) and the **Speed** icon / Ctrl+R / **]** and **[** (**د** / **ج**) change the *preview speed* of the source from 0.1× to 16×, with the voice kept natural. The current speed is shown at the top right of the picture and resets to 1× when you open another item.
+
 
 * **Live playback (default, no rendering):** press **Space** and the timeline plays immediately while you edit. Cuts between clips are gap-free (the next clip is loaded in advance), the red playhead follows the picture, and **audio, music and voice-over tracks play too** (with their volume, mute and solo). Live playback is *approximate*: colour effects, transitions, rotation/crop and picture-in-picture overlays are not drawn (a small note appears on the picture when your project uses them), the sound of lower video layers is not played, and effects such as EQ or noise reduction are not applied. Titles are shown, including font, outline and shadow.
 * **Render** (button under the picture, or F5): optional. Renders an *exact* low-resolution preview of the whole timeline – every effect, transition, title and the full mix – and plays it. For long projects this takes time, so use it only when you want to check the final look; it never runs by itself in Live mode. **Stop** cancels a render in progress.
@@ -130,7 +140,8 @@ While exporting you see a progress bar and the estimated time remaining; **Cance
 | Space | Play / pause | Ctrl+N / O / S | New / Open / Save |
 | **Up / Down** | **Next / previous frame** | Ctrl+Shift+S | Save as |
 | **Right / Left** | **Jump 5 seconds forward / back** | Ctrl+I | Import media |
-| **. (ز) / , (و)** | **Jump 1 second forward / back** | Ctrl+Z / Ctrl+Y | Undo / Redo |
+| **. (ز) / , (و)** | **Jump 1 second forward / back** | Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z) | Undo / Redo – also on the Arabic keyboard layout |
+| F11 | Full screen preview |
 | Home / End | Go to the start / end | Ctrl+A | Select all clips |
 | **] (د) / [ (ج)** | **Speed +0.1× / −0.1× on the selected clip(s)** | | |
 | S | Split at playhead | Ctrl+C / X / V | Copy / Cut / Paste clip |
