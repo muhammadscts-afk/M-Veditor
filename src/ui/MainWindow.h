@@ -8,6 +8,7 @@
 #include "ProjectModel.h"
 #include "PropertiesPanel.h"
 #include "TimelineView.h"
+#include <QElapsedTimer>
 #include <QLabel>
 #include <QLockFile>
 #include <QMainWindow>
@@ -124,6 +125,7 @@ private:
     bool m_primaryInstance = true;
     QString m_previewFile;
     QByteArray m_previewHash, m_pendingHash;
+    QElapsedTimer m_speedKeyClock;
     bool m_autoPlay = false, m_startMax = false;
     double m_playStart = 0;
     static constexpr double kImageSeconds = 5.0;

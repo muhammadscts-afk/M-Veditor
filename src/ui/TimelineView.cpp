@@ -75,7 +75,7 @@ QColor TimelineView::pairColor(const Project &p, const QString &trackId, int pai
     QColor c = pal[pairIndex % 6];
     const int first = 2 * pairIndex;
     if (first < idx.size()) { const QColor mc(p.markers[idx[first]].color); if (!p.markers[idx[first]].color.isEmpty() && mc.isValid()) c = mc; }
-    c.setAlpha(Theme::isDark() ? 38 : 46);        // the chosen colour is used as is (never mixed with an earlier one), only very transparent
+    c.setAlpha(Theme::isDark() ? 112 : 122);       // clearly visible        // the chosen colour is used as is (never mixed with an earlier one), only very transparent
     return c;
 }
 
@@ -197,7 +197,9 @@ void TimelineView::paintClip(QPainter &p, const Clip &cOrig, int ti, bool ghost)
     p.setClipRect(QRect(kHeaderW, kRulerH, viewport()->width() - kHeaderW, viewport()->height() - kRulerH));
     QPainterPath path; path.addRoundedRect(r.adjusted(0, 0, -1, -1), 4, 4);
     p.setOpacity(ghost ? 0.55 : (dimmed ? 0.35 : 1.0));
-    p.fillPath(path, base.darker(selected ? 100 : 125));
+    QColor fill = base.darker(selected ? 100 : 125);
+    fill.setAlpha(missing ? 215 : (selected ? 135 : 80));     // clip background: very transparent, so the track and the marker colours show through
+    p.fillPath(path, fill);
     p.setClipPath(path);
     if (media && (kind == "video" || kind == "image") && r.height() > 30) {
         QPixmap th = thumbFor(media->id, r.height() - 2);

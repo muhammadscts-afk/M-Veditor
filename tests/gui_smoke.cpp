@@ -19,6 +19,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QKeyEvent>
+#include <QSlider>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QScrollBar>
@@ -258,7 +259,7 @@ int main(int argc, char **argv) {
         addM(4.0, trV1);
         CHECK(pr.markerLabel(pr.markerIndexesOnTrack(trV1).last()) == "Mp", "4th marker completes the second pair (Mp)");
         const QColor c0 = TimelineView::pairColor(m->project(), trV1, 0), c1 = TimelineView::pairColor(m->project(), trV1, 1);
-        CHECK(c0 != c1 && c0.alpha() < 40 && c1.alpha() < 40, QString("pairs get different, very transparent colours (alpha %1)").arg(c0.alpha()));
+        CHECK(c0 != c1 && c0.alpha() >= 90 && c0.alpha() < 200, QString("pairs get different colours that are clearly visible but still see-through (alpha %1)").arg(c0.alpha()));
         // colour the first pair green, then orange: the new colour must be exactly the chosen one (never mixed with the previous)
         const int firstMa = m->project().markerIndexesOnTrack(trV1).first();
         m->mutate("c", [&](Project &p) { p.markers[firstMa].color = "#39ff14"; });
@@ -417,6 +418,8 @@ int main(int argc, char **argv) {
         press(0x62F, DAL);                CHECK(near(speedNow(), 1.2, 1e-9) && near(moment(), 4.0, 1e-6), QString("Arabic د speeds up by 0.1 (%1), frame kept (%2)").arg(speedNow()).arg(moment()));
         press(0x62C, JEEM);               CHECK(near(speedNow(), 1.1, 1e-9) && near(moment(), 4.0, 1e-6), QString("Arabic ج slows down by 0.1 (%1), frame kept (%2)").arg(speedNow()).arg(moment()));
         press(Qt::Key_BracketLeft, "[");  CHECK(near(speedNow(), 1.0, 1e-9) && near(moment(), 4.0, 1e-6) && near(m->playhead(), 4.0, 1e-6), "[ slows down by 0.1 and the playhead returns to the same spot");
+        press(Qt::Key_Equal, "=");  CHECK(near(speedNow(), 1.1, 1e-9) && near(moment(), 4.0, 1e-6), "the = key speeds up by 0.1, frame kept");
+        press(Qt::Key_Minus, "-");  CHECK(near(speedNow(), 1.0, 1e-9) && near(moment(), 4.0, 1e-6), "the - key slows down by 0.1, frame kept");
         for (int i = 0; i < 20; ++i) press(Qt::Key_BracketRight, "]");
         CHECK(near(speedNow(), 3.0, 1e-9) && near(moment(), 4.0, 1e-6), QString("20 presses = 3.0x, frame kept (%1)").arg(moment()));
         m->undoStack()->undo();
@@ -498,19 +501,63 @@ int main(int argc, char **argv) {
         prev->setSourceSpeed(2.0); CHECK(near(prev->sourceSpeed(), 2.0, 1e-9), "speed can be set directly (dialog)");
         prev->setSourceSpeed(40.0); CHECK(near(prev->sourceSpeed(), 16.0, 1e-9), "source speed is limited to 16x");
         prev->playSource(vidId); CHECK(near(prev->sourceSpeed(), 1.0, 1e-9), "opening a source starts at normal speed");
-        // ---- full screen
-        prev->toggleFullscreen(); QTest::qWait(400);
+        // ---- full screen: double-click the picture
+        QMouseEvent dbl(QEvent::MouseButtonDblClick, QPointF(50, 50), QPointF(50, 50), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(prev->view()->viewport(), &dbl); QTest::qWait(500);
         FullscreenWindow *fs = prev->fullscreenWindow();
-        CHECK(fs && fs->isFullScreen() && prev->isFullscreen(), "the picture goes full screen");
+        CHECK(fs && fs->isFullScreen() && prev->isFullscreen(), "double-clicking the picture goes full screen");
+        QGraphicsView *gv = prev->view();
+        const QRectF pic = gv->mapFromScene(gv->sceneRect()).boundingRect();
+        CHECK(fs && gv->parentWidget() == fs && (pic.width() >= gv->viewport()->width() * 0.95 || pic.height() >= gv->viewport()->height() * 0.95),
+              QString("the picture FILLS the full-screen window (picture %1x%2 in a %3x%4 view)").arg(int(pic.width())).arg(int(pic.height())).arg(gv->viewport()->width()).arg(gv->viewport()->height()));
+        if (fs) fs->grab().save("/tmp/mveditor_fullscreen.png");
         CHECK(fs && fs->barVisible(), "the seek bar is shown when entering full screen");
         QTest::qWait(3000);
         CHECK(fs && !fs->barVisible(), "the seek bar hides itself after the mouse is idle");
         if (fs) { QMouseEvent me(QEvent::MouseMove, QPointF(300, 300), QPointF(300, 300), Qt::NoButton, Qt::NoButton, Qt::NoModifier); QApplication::sendEvent(fs->viewport(), &me); QTest::qWait(150); }
         CHECK(fs && fs->barVisible(), "moving the mouse brings the seek bar back");
-        if (fs) { QTest::keyClick(fs, Qt::Key_Escape); QTest::qWait(200); }
-        CHECK(!prev->isFullscreen(), "Esc leaves full screen");
+        QApplication::sendEvent(prev->view()->viewport(), &dbl); QTest::qWait(300);
+        CHECK(!prev->isFullscreen() && prev->view()->parentWidget() == prev && prev->view()->isVisible(), "double-clicking again leaves full screen and the picture is back in the monitor");
+        prev->toggleFullscreen(); QTest::qWait(400);                                  // F11 / menu path
+        fs = prev->fullscreenWindow();
+        CHECK(fs && fs->isFullScreen(), "F11 / menu also enters full screen");
+        if (fs) { QTest::keyClick(fs, Qt::Key_Escape); QTest::qWait(250); }
+        CHECK(!prev->isFullscreen() && prev->view()->parentWidget() == prev, "Esc leaves full screen");
         QToolButton *tlb = nullptr; for (auto *b : prev->findChildren<QToolButton *>()) if (b->text() == "Timeline") tlb = b;
         if (tlb) tlb->click();
+    }
+    std::cout << "- volume control and A-B repeat" << std::endl;
+    {
+        auto *prev = w.findChild<PreviewMonitor *>();
+        QToolButton *liveB = nullptr; for (auto *b : prev->findChildren<QToolButton *>()) if (b->text() == "Live") liveB = b;
+        if (liveB && !liveB->isChecked()) liveB->setChecked(true);
+        auto *vb = prev->findChild<VolumeBox *>();
+        CHECK(vb != nullptr, "a volume control sits next to the time");
+        QString vidId; for (auto &mi : m->project().media) if (mi.kind == "video") vidId = mi.id;
+        prev->playSource(vidId); QTest::qWait(200);
+        prev->setMasterVolume(40);
+        CHECK(prev->volumePercent() == 40 && near(prev->outputVolume(), 0.4, 0.02), QString("volume 40%% reaches the audio output (%1)").arg(prev->outputVolume()));
+        prev->setMuted(true);  CHECK(prev->outputVolume() < 0.001, "mute silences the output");
+        prev->setMuted(false); prev->setMasterVolume(100); CHECK(near(prev->outputVolume(), 1.0, 0.02), "full volume again");
+        QToolButton *spk = vb ? vb->findChild<QToolButton *>() : nullptr;
+        if (spk) { spk->click(); CHECK(prev->isMuted(), "the speaker button mutes"); spk->click(); CHECK(!prev->isMuted(), "and unmutes"); }
+        QSlider *vs = vb ? vb->findChild<QSlider *>() : nullptr;
+        if (vs) { vs->setValue(25); CHECK(prev->volumePercent() == 25, "the volume slider changes the volume"); vs->setValue(100); }
+        QToolButton *tlb2 = nullptr; for (auto *b : prev->findChildren<QToolButton *>()) if (b->text() == "Timeline") tlb2 = b;
+        if (tlb2) tlb2->click();
+        // ---- A-B repeat on the timeline
+        prev->pause(); m->setPlayhead(3.0);
+        prev->abClick(); CHECK(prev->abState() == 1, "1st click on A B sets point A");
+        prev->abClick(); CHECK(prev->abState() == 1, "point B at the same place as A is refused");
+        m->setPlayhead(4.0); prev->abClick(); CHECK(prev->abState() == 2, "2nd click sets point B: repeating");
+        prev->abClick(); CHECK(prev->abState() == 0, "3rd click stops repeating");
+        m->setPlayhead(1.0); prev->abClick(); m->setPlayhead(2.0); prev->abClick();
+        CHECK(prev->abState() == 2, "A=1.0 s, B=2.0 s");
+        m->setPlayhead(1.7); prev->togglePlay(); QTest::qWait(1100);
+        const double ph = m->playhead(); prev->pause();
+        CHECK(ph >= 0.95 && ph <= 2.1, QString("playback repeats between A and B (the playhead is at %1 s, not past 2.0)").arg(ph));
+        prev->abClick(); CHECK(prev->abState() == 0, "clicking the A B button stops the repeat");
+        m->setPlayhead(0);
     }
     std::cout << "- Properties panel fits at minimum width (nothing cut off)" << std::endl;
     {

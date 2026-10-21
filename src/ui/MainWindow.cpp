@@ -895,11 +895,14 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *ev) {
     vk = ke->nativeVirtualKey();
 #endif
     const QString ZAY = QString::fromUtf8("\xd8\xb2"), WAW = QString::fromUtf8("\xd9\x88"), DAL = QString::fromUtf8("\xd8\xaf"), JEEM = QString::fromUtf8("\xd8\xac");
-    const bool speedUp = key == Qt::Key_BracketRight || key == Qt::Key_BraceRight || txt == "]" || txt == "}" || txt == DAL || key == 0x62F || vk == 0xDD;   // ]  or  د
-    const bool speedDn = key == Qt::Key_BracketLeft || key == Qt::Key_BraceLeft || txt == "[" || txt == "{" || txt == JEEM || key == 0x62C || vk == 0xDB;    // [  or  ج
+    const bool speedUp = key == Qt::Key_BracketRight || key == Qt::Key_BraceRight || txt == "]" || txt == "}" || txt == DAL || key == 0x62F || vk == 0xDD || key == Qt::Key_Equal || key == Qt::Key_Plus || txt == "=" || txt == "+" || vk == 0xBB;   // ]  or  د
+    const bool speedDn = key == Qt::Key_BracketLeft || key == Qt::Key_BraceLeft || txt == "[" || txt == "{" || txt == JEEM || key == 0x62C || vk == 0xDB || key == Qt::Key_Minus || txt == "-" || vk == 0xBD;    // [  or  ج
     const bool fwd1 = key == Qt::Key_Period || key == Qt::Key_Greater || txt == "." || txt == ZAY || key == 0x632 || vk == 0xBE;                            // .  or  ز
     const bool back1 = key == Qt::Key_Comma || key == Qt::Key_Less || txt == "," || txt == WAW || key == 0x648 || vk == 0xBC;                                // ,  or  و
-    if (speedUp || speedDn) { if (!ke->isAutoRepeat()) stepSpeed(speedUp ? +1 : -1); return true; }                // one step per press
+    if (speedUp || speedDn) {                                                      // one step per press; holding the key repeats gently
+        if (ke->isAutoRepeat() && m_speedKeyClock.isValid() && m_speedKeyClock.elapsed() < 180) return true;
+        m_speedKeyClock.restart(); stepSpeed(speedUp ? +1 : -1); return true;
+    }
     if (fwd1) { m_prev->seekRelative(+1); return true; }
     if (back1) { m_prev->seekRelative(-1); return true; }
     if (key == Qt::Key_Up) { m_prev->stepFrame(+1); return true; }

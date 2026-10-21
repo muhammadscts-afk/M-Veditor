@@ -52,7 +52,7 @@ On Ubuntu 24.04: `sudo apt install qt6-base-dev qt6-multimedia-dev cmake ninja-b
 
 ```bash
 ./build/engine_tests                          # ~136 checks, renders real media with FFmpeg and inspects the output
-QT_QPA_PLATFORM=offscreen ./build/gui_smoke   # ~116 checks driving the real window; writes /tmp/mveditor_ui.png
+QT_QPA_PLATFORM=offscreen ./build/gui_smoke   # ~135 checks driving the real window; writes /tmp/mveditor_ui.png
 "./build/M Veditor" --selftest                # headless packaged-app check (exit code 0 = OK, log in selftest.log)
 ```
 

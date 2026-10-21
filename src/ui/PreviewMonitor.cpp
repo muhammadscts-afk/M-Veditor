@@ -1,5 +1,6 @@
 #include "PreviewMonitor.h"
 #include "AppSettings.h"
+#include "Theme.h"
 #include "MediaProbe.h"
 #include <QFileInfo>
 #include <QCloseEvent>
@@ -16,27 +17,67 @@
 
 namespace mv {
 
-// ======================================================================= full screen window
-FullscreenWindow::FullscreenWindow(QGraphicsScene *scene) : QWidget(nullptr, Qt::Window) {
+// ======================================================================= icons / volume box / full screen window
+QIcon uiIcon(const QString &kind, const QColor &c) {
+    QPixmap pm(48, 48); pm.fill(Qt::transparent);
+    QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(Qt::NoPen); p.setBrush(c);
+    if (kind == "play") { QPolygonF t; t << QPointF(14, 8) << QPointF(14, 40) << QPointF(40, 24); p.drawPolygon(t); }
+    else if (kind == "pause") { p.drawRoundedRect(QRectF(12, 8, 9, 32), 2, 2); p.drawRoundedRect(QRectF(27, 8, 9, 32), 2, 2); }
+    else if (kind == "speaker" || kind == "muted") {
+        QPolygonF sp; sp << QPointF(6, 18) << QPointF(15, 18) << QPointF(26, 8) << QPointF(26, 40) << QPointF(15, 30) << QPointF(6, 30); p.drawPolygon(sp);
+        p.setBrush(Qt::NoBrush); p.setPen(QPen(c, 3.4, Qt::SolidLine, Qt::RoundCap));
+        if (kind == "speaker") { p.drawArc(QRectF(21, 15, 14, 18), -60 * 16, 120 * 16); p.drawArc(QRectF(21, 8, 24, 32), -60 * 16, 120 * 16); }
+        else { p.drawLine(QPointF(32, 17), QPointF(44, 31)); p.drawLine(QPointF(44, 17), QPointF(32, 31)); }
+    }
+    return QIcon(pm);
+}
+
+VolumeBox::VolumeBox(const QColor &col, QWidget *parent) : QWidget(parent), m_color(col) {
+    auto *l = new QHBoxLayout(this); l->setContentsMargins(0, 0, 0, 0); l->setSpacing(2);
+    m_btn = new QToolButton; m_btn->setAutoRaise(true); m_btn->setIconSize(QSize(18, 18)); m_btn->setFocusPolicy(Qt::NoFocus);
+    m_btn->setToolTip(tr("Volume – click to mute / unmute"));
+    m_slider = new QSlider(Qt::Horizontal); m_slider->setRange(0, 100); m_slider->setFixedWidth(64); m_slider->setFocusPolicy(Qt::NoFocus);
+    m_slider->setToolTip(tr("Preview volume"));
+    m_slider->setStyleSheet("QSlider::groove:horizontal { height: 4px; background: #5a5e68; border-radius: 2px; } QSlider::sub-page:horizontal { background: #d0d3da; border-radius: 2px; }"
+                            "QSlider::handle:horizontal { width: 10px; margin: -4px 0; border-radius: 5px; background: #ffffff; }");
+    l->addWidget(m_btn); l->addWidget(m_slider);
+    connect(m_slider, &QSlider::valueChanged, this, [this](int v) {
+        m_pct = v;
+        if (v > 0 && m_muted) { m_muted = false; emit muteToggled(false); }
+        refresh(); emit volumeChanged(v);
+    });
+    connect(m_btn, &QToolButton::clicked, this, [this] { m_muted = !m_muted; refresh(); emit muteToggled(m_muted); });
+    refresh();
+}
+void VolumeBox::setVolume(int pct) { QSignalBlocker b(m_slider); m_slider->setValue(pct); m_pct = pct; refresh(); }
+void VolumeBox::setMuted(bool m) { m_muted = m; refresh(); }
+void VolumeBox::refresh() { m_btn->setIcon(uiIcon(m_muted || m_pct == 0 ? "muted" : "speaker", m_color)); }
+
+FullscreenWindow::FullscreenWindow(QGraphicsView *view) : QWidget(nullptr, Qt::Window), m_view(view) {
     setObjectName("mvfs");
     setWindowTitle(tr("M Veditor – full screen"));
-    setStyleSheet("#mvfs { background: black; } #fsbar { background: rgba(15,15,18,205); } #fsbar QLabel { color: white; font-size: 10pt; } #fsbar QToolButton { color: white; border: none; padding: 4px 8px; font-size: 10pt; } #fsbar QToolButton:hover { background: rgba(255,255,255,40); }");
+    setStyleSheet("#mvfs { background: black; } #fsbar { background: rgba(15,15,18,215); } #fsbar QLabel { color: white; font-size: 10pt; }"
+                  "#fsbar QToolButton { color: white; border: none; padding: 4px 8px; font-size: 10pt; } #fsbar QToolButton:hover { background: rgba(255,255,255,45); }"
+                  "QToolButton#abBtn { border: 1px solid #aaa; border-radius: 3px; font-weight: bold; }"
+                  "QToolButton[abState=\"1\"] { background: #b8860b; } QToolButton[abState=\"2\"] { background: #2d9d4a; }");
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
-    m_view = new QGraphicsView(scene, this);
-    m_view->setFrameShape(QFrame::NoFrame); m_view->setBackgroundBrush(Qt::black); m_view->setRenderHint(QPainter::SmoothPixmapTransform);
-    m_view->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff); m_view->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    m_view->setFocusPolicy(Qt::NoFocus); m_view->viewport()->setFocusPolicy(Qt::NoFocus);
-    m_view->viewport()->setMouseTracking(true); m_view->viewport()->installEventFilter(this);
+    m_view->setParent(this);                                                  // the picture's own view moves in here: no second, mis-scaled copy
+    m_view->setBackgroundBrush(Qt::black);
+    m_view->setFocusPolicy(Qt::NoFocus); m_view->viewport()->setFocusPolicy(Qt::NoFocus); m_view->viewport()->setMouseTracking(true);
     m_bar = new QWidget(this); m_bar->setObjectName("fsbar"); m_bar->setMouseTracking(true); m_bar->installEventFilter(this);
-    play = new QToolButton; play->setIcon(style()->standardIcon(QStyle::SP_MediaPlay)); play->setIconSize(QSize(24, 24)); play->setFocusPolicy(Qt::NoFocus);
+    const QColor white(245, 245, 248);
+    play = new QToolButton; play->setIcon(uiIcon("play", white)); play->setIconSize(QSize(26, 26)); play->setFocusPolicy(Qt::NoFocus);
+    vol = new VolumeBox(white);
     time = new QLabel("00:00.000 / 00:00.000"); time->setMinimumWidth(190);
     slider = new SeekSlider(Qt::Horizontal); slider->setRange(0, 10000); slider->setFocusPolicy(Qt::NoFocus);
     slider->setStyleSheet("QSlider::groove:horizontal { height: 8px; background: #50545e; border-radius: 4px; } QSlider::sub-page:horizontal { background: #2d7ff9; border-radius: 4px; }"
                           "QSlider::handle:horizontal { width: 18px; margin: -6px 0; border-radius: 9px; background: #ff4757; border: 2px solid #ffffff; }");
+    abBtn = new QToolButton; abBtn->setObjectName("abBtn"); abBtn->setText("A B"); abBtn->setFocusPolicy(Qt::NoFocus);
     auto *exitB = new QToolButton; exitB->setText(tr("Exit full screen (Esc)")); exitB->setFocusPolicy(Qt::NoFocus);
     auto *lay = new QHBoxLayout(m_bar); lay->setContentsMargins(14, 8, 14, 8); lay->setSpacing(10);
-    lay->addWidget(play); lay->addWidget(time); lay->addWidget(slider, 1); lay->addWidget(exitB);
+    lay->addWidget(play); lay->addWidget(vol); lay->addWidget(time); lay->addWidget(slider, 1); lay->addWidget(abBtn); lay->addWidget(exitB);
     connect(play, &QToolButton::clicked, this, &FullscreenWindow::togglePlayRequested);
     connect(exitB, &QToolButton::clicked, this, &FullscreenWindow::exitRequested);
     m_hide.setSingleShot(true); m_hide.setInterval(2500);
@@ -57,14 +98,13 @@ void FullscreenWindow::keyPressEvent(QKeyEvent *e) {
     else QWidget::keyPressEvent(e);
 }
 void FullscreenWindow::closeEvent(QCloseEvent *e) { e->ignore(); emit exitRequested(); }
+void FullscreenWindow::showEvent(QShowEvent *) { m_view->setGeometry(rect()); m_view->show(); m_bar->raise(); }
 void FullscreenWindow::resizeEvent(QResizeEvent *) {
     m_view->setGeometry(rect());
-    m_bar->setGeometry(0, height() - 60, width(), 60);
-    m_view->fitInView(m_view->scene()->sceneRect(), Qt::KeepAspectRatio);
+    m_bar->setGeometry(0, height() - 60, width(), 60); m_bar->raise();
 }
 bool FullscreenWindow::eventFilter(QObject *o, QEvent *e) {
-    if ((o == m_view->viewport() || o == m_bar) && (e->type() == QEvent::MouseMove || e->type() == QEvent::MouseButtonPress)) showBar();
-    if (o == m_view->viewport() && e->type() == QEvent::MouseButtonDblClick) { emit exitRequested(); return true; }
+    if (o == m_bar && (e->type() == QEvent::MouseMove || e->type() == QEvent::Enter)) showBar();
     return QWidget::eventFilter(o, e);
 }
 
@@ -117,13 +157,22 @@ PreviewMonitor::PreviewMonitor(ProjectModel *model, QWidget *parent) : QWidget(p
     auto *markOut = new QToolButton; markOut->setText(tr("Out")); markOut->setToolTip(tr("Mark Out: end of the part of the source you want to use"));
     auto *addB = new QToolButton; addB->setText(tr("Add to timeline")); addB->setToolTip(tr("Add the source (or the marked part) at the playhead"));
 
-    setStyleSheet("QToolButton, QPushButton { font-size: 8pt; padding: 2px 5px; }");
+    m_master = AppSettings::s().value("preview/volume", 100).toInt() / 100.0;
+    m_audio->setVolume(float(mvol(1.0)));
+    {
+        const QColor ic = Theme::isDark() ? QColor(220, 222, 228) : QColor(40, 42, 48);
+        m_volBox = new VolumeBox(ic); m_volBox->setVolume(volumePercent());
+        m_abBtn = new QToolButton; m_abBtn->setObjectName("abBtn"); m_abBtn->setText("A B");
+    }
+    setStyleSheet("QToolButton, QPushButton { font-size: 8pt; padding: 2px 5px; }"
+                  "QToolButton#abBtn { border: 1px solid #888; border-radius: 3px; font-weight: bold; padding: 2px 6px; }"
+                  "QToolButton[abState=\"1\"] { background: #b8860b; color: white; } QToolButton[abState=\"2\"] { background: #2d9d4a; color: white; }");
     m_time->setStyleSheet("font-size: 8pt;");
     auto *lay = new QVBoxLayout(this); lay->setContentsMargins(0, 0, 0, 0); lay->setSpacing(1);
     lay->addWidget(m_view, 1);
     lay->addWidget(m_slider);
     auto *row = new QHBoxLayout; row->setContentsMargins(4, 0, 4, 2); row->setSpacing(2);      // everything on ONE line
-    row->addWidget(prev); row->addWidget(m_play); row->addWidget(stopB); row->addWidget(next); row->addWidget(m_time);
+    row->addWidget(prev); row->addWidget(m_play); row->addWidget(stopB); row->addWidget(next); row->addWidget(m_time); row->addWidget(m_abBtn); row->addWidget(m_volBox);
     row->addStretch(1);
     m_srcTools = new QWidget; auto *st = new QHBoxLayout(m_srcTools); st->setContentsMargins(0, 0, 0, 0); st->setSpacing(2);
     st->addWidget(markIn); st->addWidget(markOut); st->addWidget(addB);
@@ -160,28 +209,19 @@ PreviewMonitor::PreviewMonitor(ProjectModel *model, QWidget *parent) : QWidget(p
         if (b <= a) b = mi->duration;
         emit addToTimelineRequested(m_sourceId, a, b);
     });
-    // small dotted-rectangle button at the bottom right of the picture: full screen
-    m_fsBtn = new QToolButton(m_view->viewport());
-    {
-        QPixmap pm(20, 20); pm.fill(Qt::transparent);
-        QPainter pp(&pm); pp.setRenderHint(QPainter::Antialiasing);
-        pp.setPen(QPen(QColor(255, 255, 255, 235), 1.6, Qt::DotLine)); pp.drawRect(QRectF(3, 4, 14, 12));
-        pp.setPen(QPen(QColor(255, 255, 255, 235), 2.0, Qt::SolidLine, Qt::RoundCap));
-        pp.drawLine(QPointF(3, 4), QPointF(7, 4)); pp.drawLine(QPointF(3, 4), QPointF(3, 8)); pp.drawLine(QPointF(17, 16), QPointF(13, 16)); pp.drawLine(QPointF(17, 16), QPointF(17, 12));
-        m_fsBtn->setIcon(QIcon(pm)); m_fsBtn->setIconSize(QSize(20, 20));
-    }
-    m_fsBtn->setToolTip(tr("Full screen (F11). Move the mouse to show the seek bar; Esc exits."));
-    m_fsBtn->setCursor(Qt::PointingHandCursor); m_fsBtn->setFixedSize(30, 26);
-    m_fsBtn->setStyleSheet("QToolButton { background: rgba(0,0,0,120); border: none; border-radius: 4px; } QToolButton:hover { background: rgba(45,127,249,210); }");
-    m_view->viewport()->installEventFilter(this);
-    connect(m_fsBtn, &QToolButton::clicked, this, &PreviewMonitor::toggleFullscreen);
+    m_view->viewport()->installEventFilter(this);                          // double-click = full screen; keeps the picture fitted
+    connect(m_volBox, &VolumeBox::volumeChanged, this, &PreviewMonitor::setMasterVolume);
+    connect(m_volBox, &VolumeBox::muteToggled, this, &PreviewMonitor::setMuted);
+    connect(m_abBtn, &QToolButton::clicked, this, &PreviewMonitor::abClick);
+    m_abTimer.setTimerType(Qt::PreciseTimer); m_abTimer.setInterval(15); connect(&m_abTimer, &QTimer::timeout, this, &PreviewMonitor::abTick);
+    styleAb(m_abBtn);
     m_srcTimer.setInterval(120); connect(&m_srcTimer, &QTimer::timeout, this, &PreviewMonitor::syncSourceAudio);
     m_fsSync.setInterval(100);
     connect(&m_fsSync, &QTimer::timeout, this, [this] {
         if (!m_fs) return;
         if (!m_sliderDrag) { QSignalBlocker b(m_fs->slider); m_fs->slider->setValue(m_slider->value()); }
         m_fs->time->setText(m_time->text());
-        m_fs->play->setIcon(style()->standardIcon(isPlaying() ? QStyle::SP_MediaPause : QStyle::SP_MediaPlay));
+        m_fs->play->setIcon(uiIcon(isPlaying() ? "pause" : "play", QColor(245, 245, 248)));
     });
     connect(m_slider, &SeekSlider::dragStateChanged, this, [this](bool d) { m_sliderDrag = d; });
     connect(m_slider, &SeekSlider::seekRequested, this, &PreviewMonitor::onSeek);
@@ -232,7 +272,7 @@ void PreviewMonitor::onStatus(QMediaPlayer *pl, QMediaPlayer::MediaStatus st) {
     } else {
         for (Voice &v : m_voices) if (v.pl == pl && ok && v.pend.valid) {
             v.pend.valid = false; v.loaded = true;
-            v.pl->setPlaybackRate(std::clamp(v.pend.rate, 0.1, 16.0)); v.ao->setVolume(float(std::clamp(v.pend.vol, 0.0, 1.0)));
+            v.pl->setPlaybackRate(std::clamp(v.pend.rate, 0.1, 16.0)); v.ao->setVolume(float(mvol(v.pend.vol)));
             v.pl->setPosition(v.pend.posMs);
             if (v.pend.play) v.pl->play(); else v.pl->pause();
         }
@@ -240,9 +280,10 @@ void PreviewMonitor::onStatus(QMediaPlayer *pl, QMediaPlayer::MediaStatus st) {
 }
 
 bool PreviewMonitor::eventFilter(QObject *o, QEvent *e) {
-    if (o == m_view->viewport() && m_fsBtn && (e->type() == QEvent::Resize || e->type() == QEvent::Show)) {
-        const QWidget *vp = m_view->viewport();
-        m_fsBtn->move(vp->width() - m_fsBtn->width() - 8, vp->height() - m_fsBtn->height() - 8); m_fsBtn->raise();
+    if (o == m_view->viewport()) {
+        if (e->type() == QEvent::Resize) fit();                                          // the picture always fills the view (normal and full screen)
+        else if (e->type() == QEvent::MouseMove && m_fs) m_fs->showBar();
+        else if (e->type() == QEvent::MouseButtonDblClick) { toggleFullscreen(); return true; }   // double-click the picture: full screen on / off
     }
     return QWidget::eventFilter(o, e);
 }
@@ -257,7 +298,7 @@ void PreviewMonitor::updateBadge() {
 
 void PreviewMonitor::setSourceSpeed(double s) {
     m_srcSpeed = std::clamp(std::round(s * 100) / 100.0, 0.1, 16.0);
-    if (m_mode == Mode::Source) { m_player->setPlaybackRate(m_srcSpeed); syncSourceAudio(); }
+    if (m_mode == Mode::Source) { m_player->setPlaybackRate(m_srcSpeed); m_srcSettle.restart(); if (m_pitch->active()) stopPitch(); syncSourceAudio(); }
     updateBadge();
 }
 
@@ -266,7 +307,7 @@ void PreviewMonitor::syncSourceAudio() {
     if (m_mode != Mode::Source) return;
     const MediaItem *mi = m->project().mediaById(m_sourceId);
     const bool need = m_player->playbackState() == QMediaPlayer::PlayingState && std::fabs(m_srcSpeed - 1.0) > 1e-6 && mi && mi->hasAudio && !mi->missing;
-    if (!need) { if (m_pitch->active()) stopPitch(); m_audio->setVolume(1.0); return; }
+    if (!need) { if (m_pitch->active()) stopPitch(); m_audio->setVolume(float(mvol(1.0))); return; }
     constexpr double kLatency = 0.28;
     const double srcNow = m_player->position() / 1000.0;
     bool restart = m_pitchClipId != "source" || std::fabs(m_pitchSpeed - m_srcSpeed) > 1e-6 || !m_pitch->active();
@@ -274,30 +315,43 @@ void PreviewMonitor::syncSourceAudio() {
         const double e = m_pitchClock.elapsed() / 1000.0;
         if (e > kLatency + 0.4) { const double predicted = m_pitchStartSrc + (e - kLatency) * m_srcSpeed; if (std::fabs(predicted - srcNow) > 0.7 * std::max(1.0, m_srcSpeed)) restart = true; }
     }
+    if (restart && m_srcSettle.isValid() && m_srcSettle.elapsed() < 180) { if (m_pitch->active()) stopPitch(); m_audio->setVolume(0.0); return; }   // speed just changed: restart the sound when it settles
     if (restart) {
         m_pitchStartSrc = srcNow + kLatency * m_srcSpeed;
-        if (!m_pitch->start(mi->path, m_pitchStartSrc, m_srcSpeed, 1.0)) { stopPitch(); m_audio->setVolume(1.0); return; }
+        if (!m_pitch->start(mi->path, m_pitchStartSrc, m_srcSpeed, mvol(1.0))) { stopPitch(); m_audio->setVolume(float(mvol(1.0))); return; }
         m_pitchClock.start(); m_pitchClipId = "source"; m_pitchSpeed = m_srcSpeed;
     }
+    m_pitch->setVolume(mvol(1.0));
     m_audio->setVolume(0.0);
 }
 
 void PreviewMonitor::toggleFullscreen() { if (m_fs) exitFullscreen(); else enterFullscreen(); }
 void PreviewMonitor::enterFullscreen() {
     if (m_fs) return;
-    m_fs = new FullscreenWindow(m_scene);
+    static_cast<QBoxLayout *>(layout())->removeWidget(m_view);
+    m_fs = new FullscreenWindow(m_view);
     connect(m_fs, &FullscreenWindow::exitRequested, this, &PreviewMonitor::exitFullscreen);
     connect(m_fs, &FullscreenWindow::togglePlayRequested, this, &PreviewMonitor::togglePlay);
     connect(m_fs->slider, &SeekSlider::seekRequested, this, &PreviewMonitor::onSeek);
     connect(m_fs->slider, &SeekSlider::dragStateChanged, this, [this](bool d) { m_sliderDrag = d; });
+    connect(m_fs->abBtn, &QToolButton::clicked, this, &PreviewMonitor::abClick);
+    connect(m_fs->vol, &VolumeBox::volumeChanged, this, &PreviewMonitor::setMasterVolume);
+    connect(m_fs->vol, &VolumeBox::muteToggled, this, &PreviewMonitor::setMuted);
+    m_fs->vol->setVolume(volumePercent()); m_fs->vol->setMuted(m_muted);
     if (QScreen *sc = window()->screen()) m_fs->setGeometry(sc->geometry());       // on the screen the editor is on
-    m_fs->showFullScreen(); m_fs->setFocus(); m_fs->showBar();
+    m_fs->showFullScreen(); m_view->show(); m_fs->setFocus(); m_fs->showBar();
+    updateAbUi();
     m_fsSync.start();
 }
 void PreviewMonitor::exitFullscreen() {
     if (!m_fs) return;
     m_fsSync.stop();
     FullscreenWindow *w = m_fs; m_fs = nullptr;
+    m_view->viewport()->unsetCursor();
+    m_view->setBackgroundBrush(QColor(10, 10, 12));
+    m_view->setParent(this);                                                       // the view goes back into the monitor
+    static_cast<QBoxLayout *>(layout())->insertWidget(0, m_view, 1);
+    m_view->show();
     w->hide(); w->deleteLater();
     fit();
 }
@@ -339,7 +393,9 @@ void PreviewMonitor::updateLiveNote() {
 }
 
 void PreviewMonitor::setMode(Mode md) {
+    const Mode oldMode = m_mode;
     m_mode = md;
+    if ((md == Mode::Source) != (oldMode == Mode::Source)) abClear();          // source time and timeline time are different scales
     m_srcBtn->setChecked(md == Mode::Source);
     m_tlBtn->setChecked(md != Mode::Source);
     m_srcTools->setVisible(md == Mode::Source);
@@ -379,7 +435,7 @@ void PreviewMonitor::playSource(const QString &mediaId) {
     if (mi->missing) { emit message(tr("This file is missing. Use File > Relink Missing Media.")); return; }
     setMode(Mode::Source);
     showBusy({});
-    m_srcSpeed = 1.0; updateBadge();
+    m_srcSpeed = 1.0; updateBadge(); abClear();
     m_sourceId = mediaId; m_markIn = m_markOut = -1; m_srcFps = mi->fps > 0 ? mi->fps : 30;
     setCanvas(mi->width ? mi->width : 1280, mi->height ? mi->height : 720);
     m_image->setVisible(false);
@@ -393,7 +449,7 @@ void PreviewMonitor::playSource(const QString &mediaId) {
     m_video->setVisible(mi->hasVideo);
     const QString path = m->playablePath(mediaId, AppSettings::useProxies());
     m_loadedPath = path;
-    m_player->setPlaybackRate(1.0); m_audio->setVolume(1.0);
+    m_player->setPlaybackRate(1.0); m_audio->setVolume(float(mvol(1.0)));
     m_player->setSource(QUrl::fromLocalFile(path));
     m_pending = {true, 0, true, 1.0, 1.0};
 }
@@ -406,7 +462,7 @@ void PreviewMonitor::playRendered(const QString &path, double startSeconds, bool
     setCanvas(m->project().settings.width, m->project().settings.height);
     m_image->setVisible(false); m_video->setVisible(true);
     m_loadedPath = path; m_offsetMs = 0; m_endMs = 0; m_renderedSig = m->project().renderSignature();
-    m_player->setPlaybackRate(1.0); m_audio->setVolume(1.0);
+    m_player->setPlaybackRate(1.0); m_audio->setVolume(float(mvol(1.0)));
     m_player->setSource(QUrl::fromLocalFile(path));
     m_pending = {true, qint64(std::max(0.0, startSeconds) * 1000), autoplay, 1.0, 1.0};
 }
@@ -420,7 +476,7 @@ void PreviewMonitor::playDirect(const QString &path, double in, double out, doub
     setCanvas(m->project().settings.width, m->project().settings.height);
     m_image->setVisible(false); m_video->setVisible(true);
     m_loadedPath = path; m_offsetMs = qint64(in * 1000); m_endMs = qint64(out * 1000); m_renderedSig = m->project().renderSignature();
-    m_player->setPlaybackRate(1.0); m_audio->setVolume(1.0);
+    m_player->setPlaybackRate(1.0); m_audio->setVolume(float(mvol(1.0)));
     m_player->setSource(QUrl::fromLocalFile(path));
     m_pending = {true, m_offsetMs + qint64(std::max(0.0, start) * 1000), autoplay, 1.0, 1.0};
 }
@@ -449,7 +505,7 @@ void PreviewMonitor::pause() {
     if (m_tlPlaying) { m_tlPlaying = false; m_timer.stop(); }
     m_smooth.stop();
     stopPitch();
-    if (m_mode == Mode::Source) m_audio->setVolume(1.0);
+    if (m_mode == Mode::Source) m_audio->setVolume(float(mvol(1.0)));
     m_player->pause();
     if (m_pre.pl) m_pre.pl->pause();
     for (Voice &v : m_voices) { v.pl->pause(); v.pend.play = false; }
@@ -526,7 +582,7 @@ void PreviewMonitor::applyToPlayer(qint64 posMs, bool play, double rate, double 
     m_activeRate = rate;
     m_player->setPlaybackRate(std::clamp(rate, 0.1, 16.0));                       // rate first ...
     if (std::llabs(m_player->position() - posMs) > (play ? 350 : 20)) m_player->setPosition(posMs);   // ... then the position, so a rate change can't leave the picture elsewhere
-    m_audio->setVolume(float(std::clamp(vol, 0.0, 1.0)));
+    m_audio->setVolume(float(mvol(vol)));
     if (play) m_player->play(); else m_player->pause();
 }
 
@@ -543,7 +599,7 @@ void PreviewMonitor::loadActive(const Clip &c, const MediaItem &mi, qint64 targe
         m_loadedPath = path;
         m_pending = {true, target, play, rate, vol};
         m_player->setSource(QUrl::fromLocalFile(path));
-        m_audio->setVolume(float(std::clamp(vol, 0.0, 1.0)));
+        m_audio->setVolume(float(mvol(vol)));
         m_player->setPlaybackRate(std::clamp(rate, 0.1, 16.0));
     } else if (m_pending.valid) {
         m_pending = {true, target, play, rate, vol};
@@ -587,16 +643,18 @@ double PreviewMonitor::pitchAudioFor(const Clip &c, const MediaItem &mi, double 
     if (!need) { if (m_pitch->active()) stopPitch(); return vol; }
     const double srcNow = c.in + (t - c.start) * c.fx.speed;
     constexpr double kLatency = 0.28;                         // seconds until the first audio arrives
+    if (std::fabs(c.fx.speed - m_pitchSpeedSeen) > 1e-6) { m_pitchSpeedSeen = c.fx.speed; m_pitchSeenClock.restart(); }
     bool restart = m_pitchClipId != c.id || std::fabs(m_pitchSpeed - c.fx.speed) > 1e-6 || !m_pitch->active();
     if (!restart) {
         const double e = m_pitchClock.elapsed() / 1000.0;
         if (e > kLatency + 0.4) { const double predicted = m_pitchStartSrc + (e - kLatency) * c.fx.speed; if (std::fabs(predicted - srcNow) > 0.7 * std::max(1.0, c.fx.speed)) restart = true; }
     }
+    if (restart && m_pitchSeenClock.elapsed() < 180) { if (m_pitch->active()) stopPitch(); return 0.0; }       // speed is still changing (key held / repeated): stay quiet, restart the sound once it settles
     if (restart) {
         m_pitchStartSrc = srcNow + kLatency * c.fx.speed;
-        if (!m_pitch->start(mi.path, m_pitchStartSrc, c.fx.speed, vol)) { stopPitch(); return vol; }   // no device: fall back to the player's audio
+        if (!m_pitch->start(mi.path, m_pitchStartSrc, c.fx.speed, mvol(vol))) { stopPitch(); return vol; }   // no device: fall back to the player's audio
         m_pitchClock.start(); m_pitchClipId = c.id; m_pitchSpeed = c.fx.speed;
-    } else m_pitch->setVolume(vol);
+    } else m_pitch->setVolume(mvol(vol));
     return 0.0;
 }
 
@@ -634,7 +692,7 @@ void PreviewMonitor::syncVoices(double t, bool play) {
             continue;
         }
         if (v->pend.valid) { v->pend.posMs = target; v->pend.play = started; continue; }
-        v->ao->setVolume(float(std::clamp(vol, 0.0, 1.0)));
+        v->ao->setVolume(float(mvol(vol)));
         if (started) {
             if (v->pl->playbackState() != QMediaPlayer::PlayingState) { v->pl->setPosition(target); v->pl->play(); }
             else if (std::llabs(v->pl->position() - target) > 450) v->pl->setPosition(target);
@@ -673,8 +731,8 @@ void PreviewMonitor::syncTo(double t, bool play) {
             const double vol = pictureShown || true ? pitchAudioFor(*c, *mi, t, play, ownVol) : ownVol;       // 0 while the pitch-preserving stream plays
             if (m_activeClipId == c->id) {
                 if (play) {
-                    if (std::fabs(m_activeRate - c->fx.speed) > 1e-6 && !m_pending.valid) { m_player->setPlaybackRate(std::clamp(c->fx.speed, 0.1, 16.0)); m_activeRate = c->fx.speed; m_player->setPosition(target); }   // speed changed while playing: land exactly on the same frame
-                    m_audio->setVolume(float(std::clamp(vol, 0.0, 1.0))); keepPlaying(target);
+                    if (std::fabs(m_activeRate - c->fx.speed) > 1e-6 && !m_pending.valid) { m_player->setPlaybackRate(std::clamp(c->fx.speed, 0.1, 16.0)); m_activeRate = c->fx.speed; if (std::llabs(m_player->position() - target) > 150) m_player->setPosition(target); m_lastReported = m_player->position(); m_lastClock.restart(); }   // speed changed while playing: only re-seek if the picture really moved
+                    m_audio->setVolume(float(mvol(vol))); keepPlaying(target);
                 } else if (m_pending.valid) { m_pending.posMs = target; m_pending.play = false; } else applyToPlayer(target, false, c->fx.speed, vol);
             } else if (play && m_pre.clipId == c->id && m_pre.loaded) {
                 swapDecks();                                   // next clip was preloaded: switch with no gap
@@ -755,6 +813,7 @@ double PreviewMonitor::liveTime() {
 void PreviewMonitor::tick() {
     const double t = liveTime();
     const double dur = m->project().duration();
+    if (m_ab == 2 && t >= m_abB) { m->setPlayhead(m_abA); return; }                // A-B repeat: jump back to A
     if (t >= dur) { m->setPlayhead(dur, true); pause(); return; }
     m->setPlayhead(t, true);
     syncTo(t, true);
@@ -793,6 +852,7 @@ void PreviewMonitor::onProjectChanged() {
     }
     if (m_mode == Mode::Timeline && !m_tlPlaying) syncTo(m->playhead(), false);
     updateTimeLabel();
+    if (m_ab == 2) updateAbUi();
 }
 
 void PreviewMonitor::updateTimeLabel() {
@@ -804,6 +864,75 @@ void PreviewMonitor::updateTimeLabel() {
         const qint64 off = m_mode == Mode::Rendered ? m_offsetMs : 0;
         m_time->setText(humanTime(std::max<qint64>(0, m_player->position() - off) / 1000.0, true) + " / " + humanTime(rangeMs() / 1000.0, true));
     }
+}
+
+// ======================================================================= volume
+void PreviewMonitor::applyMasterNow() {
+    if (m_mode == Mode::Source) { if (m_pitch->active()) m_pitch->setVolume(mvol(1.0)); else m_audio->setVolume(float(mvol(1.0))); }
+    else if (m_mode == Mode::Rendered) m_audio->setVolume(float(mvol(1.0)));
+    // live timeline playback applies it on the next tick
+    if (m_volBox) { m_volBox->setVolume(volumePercent()); m_volBox->setMuted(m_muted); }
+    if (m_fs) { m_fs->vol->setVolume(volumePercent()); m_fs->vol->setMuted(m_muted); }
+}
+void PreviewMonitor::setMasterVolume(int pct) {
+    m_master = std::clamp(pct, 0, 100) / 100.0;
+    AppSettings::s().setValue("preview/volume", int(m_master * 100 + 0.5));
+    if (pct > 0) m_muted = false;
+    applyMasterNow();
+}
+void PreviewMonitor::setMuted(bool mu) { m_muted = mu; applyMasterNow(); }
+
+// ======================================================================= A-B repeat
+double PreviewMonitor::abPosition() const {
+    if (m_mode == Mode::Timeline) return m->playhead();
+    if (m_mode == Mode::Source) return m_player->position() / 1000.0;
+    return (m_player->position() - m_offsetMs) / 1000.0;
+}
+double PreviewMonitor::abDuration() const {
+    if (m_mode == Mode::Timeline) return m->project().duration();
+    if (m_mode == Mode::Source) return m_player->duration() / 1000.0;
+    return rangeMs() / 1000.0;
+}
+void PreviewMonitor::abClick() {
+    if (m_ab == 0) {
+        m_abA = std::max(0.0, abPosition()); m_ab = 1;
+        emit message(tr("A–B repeat: start (A) set at %1. Click again to set the end (B).").arg(humanTime(m_abA, true)));
+    } else if (m_ab == 1) {
+        const double b = abPosition();
+        if (b <= m_abA + 0.05) { emit message(tr("Point B must be after point A. Move forward and click again.")); return; }
+        m_abB = b; m_ab = 2; m_abTimer.start();
+        emit message(tr("Repeating from %1 to %2. Click the A B button again to stop.").arg(humanTime(m_abA, true), humanTime(m_abB, true)));
+    } else {
+        abClear();
+        emit message(tr("A–B repeat stopped."));
+    }
+    updateAbUi();
+}
+void PreviewMonitor::abClear() { m_ab = 0; m_abTimer.stop(); if (m_abBtn) updateAbUi(); }
+void PreviewMonitor::abTick() {
+    if (m_ab != 2 || m_player->playbackState() != QMediaPlayer::PlayingState) return;
+    if (m_mode == Mode::Source) { if (m_player->position() >= qint64(m_abB * 1000) - 10) m_player->setPosition(qint64(m_abA * 1000)); }
+    else if (m_mode == Mode::Rendered) {
+        if (m_player->position() - m_offsetMs >= qint64(m_abB * 1000) - 10) { m_player->setPosition(m_offsetMs + qint64(m_abA * 1000)); m->setPlayhead(m_abA, true); }
+    }
+}
+void PreviewMonitor::styleAb(QToolButton *b) {
+    if (!b) return;
+    b->setText(m_ab == 1 ? "A ·" : "A B");
+    b->setProperty("abState", m_ab);
+    b->style()->unpolish(b); b->style()->polish(b);
+    b->setToolTip(m_ab == 0 ? tr("A–B repeat: click to mark the START (A) at the current position")
+                : m_ab == 1 ? tr("Click again to mark the END (B). The part between A and B will then repeat")
+                            : tr("Repeating A–B. Click to stop repeating"));
+}
+void PreviewMonitor::updateAbUi() {
+    const double dur = abDuration();
+    double fa = -1, fb = -1;
+    if (m_ab >= 1 && dur > 0) { fa = std::clamp(m_abA / dur, 0.0, 1.0); fb = m_ab == 2 ? std::clamp(m_abB / dur, 0.0, 1.0) : fa + 0.002; }
+    m_slider->setLoop(fa, fb);
+    if (m_fs) m_fs->slider->setLoop(fa, fb);
+    styleAb(m_abBtn);
+    if (m_fs) styleAb(m_fs->abBtn);
 }
 
 } // namespace mv

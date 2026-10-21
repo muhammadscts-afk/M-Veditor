@@ -60,7 +60,7 @@ When you cut segments and move them, empty spaces ("gaps") stay behind – befor
 * **Markers belong to one track.** The *active track* is the one you clicked last (its header gets a blue bar). Press **M** to drop a marker at the playhead on the active track, or right-click the ruler / an empty spot of a track ▸ **Add marker here**. You can have markers on as many tracks as you like; each marker's line and tint appear **only on its own track**.
 * **Pairs:** on each track the markers are used in pairs in time order: the 1st and 2nd (**Ma**, **Mp**), the 3rd and 4th (**Ma**, **Mp**), and so on. The area **between the two markers of a pair** is tinted with a very transparent colour. Nothing is tinted between pairs (between Mp and the next Ma), before the first marker, or after a last unpaired Ma – that one waits for its Mp.
 * **Names** are automatic (Ma, Mp, Ma, Mp …) and follow the time order, so they always make sense even if you add a marker earlier on the track. Use *Rename…* for a custom name.
-* The colour is drawn as a transparent layer **on top of the clips** between Ma and Mp (only on that marker's track), so you can see it over the video too.
+* The colour is drawn as a clearly visible but see-through layer **on top of the clips** (the clips' own background colour is very transparent) between Ma and Mp (only on that marker's track), so you can see it over the video too.
 * **Right-click a marker head** (the little flag on the track or on the ruler) to rename or delete it or to pick the colour of its pair: **bright green, bright yellow, bright orange, bright light blue**, pink, violet, red, *Other colour…* or *Automatic*. A new colour replaces the old one completely – colours are never mixed.
 * Turn the tint off in **View ▸ Colour regions between markers** (the marker lines stay).
 
@@ -75,7 +75,7 @@ Select a clip and choose **Video ▸ Speed controller** (Ctrl+R) or the **Speed*
 * **Audio**: keep it, mute it, or **detach** it to an audio track at its original speed.
 * **Play in reverse** is available in the same dialog.
 
-**Keyboard:** select a clip and press **]** (**د** on the Arabic keyboard) to make it 0.1× faster or **[** (**ج**) to make it 0.1× slower. Each press changes the speed by 0.1×, many presses count as **one** undo step, and the picture stays on the same frame (the red playhead moves along the timeline instead, because the whole clip becomes shorter or longer). If several clips are selected they all change; the frame is kept for the selected clip that is under the playhead. The keys do nothing while you are typing in a text or number box (press Enter in a box to leave it so the keys work again). The arrow, comma/period and bracket keys work with both the English and the Arabic keyboard layout.
+**Keyboard:** select a clip and press **]** (**د** on the Arabic keyboard) to make it 0.1× faster or **[** (**ج**) to make it 0.1× slower. Each press changes the speed by 0.1× (holding the key repeats gently; the sound is muted while the speed is changing and comes back once it settles), many presses count as **one** undo step, and the picture stays on the same frame (the red playhead moves along the timeline instead, because the whole clip becomes shorter or longer). If several clips are selected they all change; the frame is kept for the selected clip that is under the playhead. The keys do nothing while you are typing in a text or number box (press Enter in a box to leave it so the keys work again). The arrow, comma/period and bracket keys work with both the English and the Arabic keyboard layout.
 
 The speed is applied to the real picture and sound during export – it is not just a preview setting. The original file is untouched.
 
@@ -96,7 +96,9 @@ Original audio files are never overwritten. Exports never replace an existing fi
 
 ## 6. Previewing your edit
 
-* **Full screen:** click the small dotted-rectangle icon at the bottom right of the picture (or press **F11**). In full screen the seek bar, play button and time appear when you move the mouse and hide again after about 2.5 seconds of stillness (the mouse pointer hides too). Click or drag the bar to seek, **Space** plays/pauses, the arrow and comma/period keys work as usual, **Esc** or a double click leaves full screen.
+* **Full screen:** **double-click the picture** (or press **F11**, or View ▸ Full screen preview). The picture fills the screen. The control bar (play, volume, time, seek bar, **A B**, exit) appears when you move the mouse and hides again, together with the mouse pointer, after about 2.5 seconds of stillness. Click or drag the bar to seek, **Space** plays/pauses, the arrow and comma/period keys work as usual, **Esc** or another double-click leaves full screen.
+* **Volume:** the speaker button next to the time mutes/unmutes and the little slider sets the preview volume (also in full screen). It affects everything you hear in the preview – timeline, source and rendered preview – but never the exported file.
+* **A–B repeat (like VLC):** the **A B** button next to the time. Click once to mark the start **A** at the current position, click again to mark the end **B** – the part between them now repeats (a yellow band shows it on the seek bar). Click the button once more to stop repeating. Works for the timeline and for a source; seeking elsewhere does not cancel it.
 * **Speed while playing the source:** open a library item (double-click) and the **Speed** icon / Ctrl+R / **]** and **[** (**د** / **ج**) change the *preview speed* of the source from 0.1× to 16×, with the voice kept natural. The current speed is shown at the top right of the picture and resets to 1× when you open another item.
 
 
@@ -143,7 +145,7 @@ While exporting you see a progress bar and the estimated time remaining; **Cance
 | **. (ز) / , (و)** | **Jump 1 second forward / back** | Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z) | Undo / Redo – also on the Arabic keyboard layout |
 | F11 | Full screen preview |
 | Home / End | Go to the start / end | Ctrl+A | Select all clips |
-| **] (د) / [ (ج)** | **Speed +0.1× / −0.1× on the selected clip(s)** | | |
+| **] (د) or =** / **[ (ج) or -** | **Speed +0.1× / −0.1× on the selected clip(s)** | | |
 | S | Split at playhead | Ctrl+C / X / V | Copy / Cut / Paste clip |
 | Delete / Shift+Delete | Delete / ripple delete | Ctrl+D | Duplicate |
 | M | Add marker | T | Add title |

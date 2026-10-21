@@ -15,6 +15,7 @@
 #include <QMediaPlayer>
 #include <QKeyEvent>
 #include <QMouseEvent>
+#include <QPainter>
 #include <QSlider>
 #include <QStyle>
 #include <QTimer>
@@ -28,10 +29,20 @@ class SeekSlider : public QSlider {
     Q_OBJECT
 public:
     explicit SeekSlider(Qt::Orientation o, QWidget *parent = nullptr) : QSlider(o, parent) {}
+    void setLoop(double a, double b) { m_la = a; m_lb = b; update(); }      // A-B repeat range as fractions (negative = none)
 signals:
     void seekRequested(double fraction);
     void dragStateChanged(bool down);
 protected:
+    void paintEvent(QPaintEvent *e) override {
+        QSlider::paintEvent(e);
+        if (m_la >= 0 && m_lb >= m_la) {
+            QPainter p(this); const double pad = 9, w = width() - 2 * pad;
+            const QRectF r(pad + m_la * w, height() / 2.0 - 7, std::max(2.0, (m_lb - m_la) * w), 14);
+            p.fillRect(r, QColor(255, 200, 40, 120)); p.fillRect(QRectF(r.left() - 1, r.top() - 2, 2, r.height() + 4), QColor(255, 200, 40));
+            p.fillRect(QRectF(r.right() - 1, r.top() - 2, 2, r.height() + 4), QColor(255, 200, 40));
+        }
+    }
     void mousePressEvent(QMouseEvent *e) override {
         if (e->button() != Qt::LeftButton) return QSlider::mousePressEvent(e);
         m_down = true; emit dragStateChanged(true); seekTo(e->position().x()); e->accept();
@@ -46,16 +57,40 @@ private:
         emit seekRequested(maximum() > 0 ? double(v) / maximum() : 0.0);
     }
     bool m_down = false;
+    double m_la = -1, m_lb = -1;
 };
 
-// Full-screen picture with a seek bar that appears when the mouse moves and hides again when it is idle (like other media players).
+QIcon uiIcon(const QString &kind, const QColor &color);      // small icons drawn in any colour (the style's own icons are dark and vanish on a dark bar)
+
+// Speaker button (click = mute) with a volume slider.
+class VolumeBox : public QWidget {
+    Q_OBJECT
+public:
+    explicit VolumeBox(const QColor &iconColor, QWidget *parent = nullptr);
+    void setVolume(int percent);
+    void setMuted(bool muted);
+signals:
+    void volumeChanged(int percent);
+    void muteToggled(bool muted);
+private:
+    void refresh();
+    QToolButton *m_btn;
+    QSlider *m_slider;
+    QColor m_color;
+    bool m_muted = false;
+    int m_pct = 100;
+};
+
+// Full-screen picture: the monitor's own view is moved into this window, so the picture always fills the screen.
+// The seek bar appears when the mouse moves and hides again when it is idle (like other media players).
 class FullscreenWindow : public QWidget {
     Q_OBJECT
 public:
-    explicit FullscreenWindow(QGraphicsScene *scene);
+    explicit FullscreenWindow(QGraphicsView *view);
     SeekSlider *slider = nullptr;
     QLabel *time = nullptr;
-    QToolButton *play = nullptr;
+    QToolButton *play = nullptr, *abBtn = nullptr;
+    VolumeBox *vol = nullptr;
     bool barVisible() const { return m_bar->isVisible(); }
     QWidget *viewport() const { return m_view->viewport(); }
     void showBar();
@@ -65,6 +100,7 @@ signals:
 protected:
     void keyPressEvent(QKeyEvent *) override;
     void resizeEvent(QResizeEvent *) override;
+    void showEvent(QShowEvent *) override;
     void closeEvent(QCloseEvent *) override;
     bool eventFilter(QObject *, QEvent *) override;
 private:
@@ -99,6 +135,16 @@ public:
     QString sourceId() const { return m_sourceId; }
     void toggleFullscreen();
     bool isFullscreen() const { return m_fs != nullptr; }
+    QGraphicsView *view() const { return m_view; }
+    // volume (applies to everything the preview plays)
+    void setMasterVolume(int percent);
+    void setMuted(bool muted);
+    int volumePercent() const { return int(m_master * 100 + 0.5); }
+    bool isMuted() const { return m_muted; }
+    float outputVolume() const { return m_audio->volume(); }
+    // A-B repeat (like VLC): 1st click sets A, 2nd sets B and repeats, 3rd stops
+    void abClick();
+    int abState() const { return m_ab; }
     FullscreenWindow *fullscreenWindow() const { return m_fs; }
     void showBusy(const QString &text);
 signals:
@@ -136,6 +182,14 @@ private:
     void ensureVoices();
     void releaseLive();
     void syncSourceAudio();
+    double mvol(double v) const { return std::clamp(v * (m_muted ? 0.0 : m_master), 0.0, 1.0); }
+    void applyMasterNow();
+    void abClear();
+    void abTick();
+    void updateAbUi();
+    void styleAb(QToolButton *b);
+    double abPosition() const;
+    double abDuration() const;
     void updateBadge();
     void enterFullscreen();
     void exitFullscreen();
@@ -164,7 +218,14 @@ private:
     double m_srcSpeed = 1.0;
     QTimer m_srcTimer, m_fsSync;
     FullscreenWindow *m_fs = nullptr;
-    QToolButton *m_fsBtn = nullptr;
+    VolumeBox *m_volBox = nullptr;
+    QToolButton *m_abBtn = nullptr;
+    QTimer m_abTimer;
+    int m_ab = 0;
+    double m_abA = 0, m_abB = 0, m_master = 1.0;
+    bool m_muted = false;
+    double m_pitchSpeedSeen = 0;
+    QElapsedTimer m_pitchSeenClock, m_srcSettle;
     QVector<QGraphicsItem *> m_titleItems;
     QString m_titleKey;
     QMediaPlayer *m_player;                      // the ACTIVE deck's player (swapped with m_pre on gap-free cuts)
