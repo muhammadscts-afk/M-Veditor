@@ -129,6 +129,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         menu.exec(gp);
     });
     connect(m_prev, &PreviewMonitor::modeChanged, this, &MainWindow::updateActions);
+    connect(m_prev, &PreviewMonitor::extractAllRequested, this, &MainWindow::extractAllMarked);
     connect(m_prev, &PreviewMonitor::stopPressed, this, [this] { if (busy() && m_kind == JobKind::Preview) m_job->cancel(); });
     connect(m_tl, &TimelineView::addTrackRequested, this, [this](int t) { addTrack(TrackType(t)); });
     connect(m_prev, &PreviewMonitor::message, this, [this](const QString &t) { notify(t); });
@@ -1119,6 +1120,19 @@ void MainWindow::addMarker(double t, const QString &trackId) {
     int idx = -1; for (int i = 0; i < m->project().markers.size(); ++i) if (std::fabs(m->project().markers[i].time - t) < 1e-9 && m->project().markerTrack(m->project().markers[i]) == tid) idx = i;
     const Track *trk = m->project().trackById(tid);
     notify(tr("Marker %1 added on %2. Markers work in pairs (Ma, Mp): the area between them is tinted.").arg(m->project().markerLabel(idx), trk ? trk->name : QString()));
+}
+
+void MainWindow::extractAllMarked() {
+    const QString src = m->activeTrack();
+    const Track *st = m->project().trackById(src);
+    QString target, err; QStringList moved;
+    bool ok = false;
+    m->mutate(tr("Extract all marked segments"), [&](Project &pr) { ok = pr.extractMarkedSegments(src, &target, &moved, &err); });   // one undo step
+    if (!ok) { notify(err.isEmpty() ? tr("Nothing to extract.") : err); return; }
+    m->setSelection(moved);
+    const Track *tt = m->project().trackById(target);
+    notify(tr("%1 segment(s) of %2 extracted to %3 at the same positions. Gaps remain on the original track (hover a gap and click the bin to remove them).")
+               .arg(moved.size()).arg(st ? st->name : QString(), tt ? tt->name : QString()));
 }
 
 void MainWindow::setPairColor(int mi, const QString &color) {

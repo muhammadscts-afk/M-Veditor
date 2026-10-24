@@ -140,6 +140,9 @@ public:
     QVector<Gap> gapsOnTrack(const QString &trackId) const;
     void closeGap(const QString &trackId, double start, double end);
     void closeAllGaps(const QString &trackId);
+    // "Extract all": cuts every clip of the track at the marker pairs (Ma..Mp) and moves the marked parts, at the SAME time positions,
+    // to the nearest track below of the same type that is free there - or to a new track of that type created right below.
+    bool extractMarkedSegments(const QString &trackId, QString *targetTrack, QStringList *movedClipIds, QString *error);
     int usageCount(const QString &mediaId) const;
     // Markers belong to one track each. They are sorted by time and used in pairs: 1st+2nd, 3rd+4th, ... (Ma, Mp, Ma, Mp ...).
     QString markerTrack(const Marker &m) const;

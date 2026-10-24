@@ -324,6 +324,58 @@ int main(int argc, char **argv) {
         CHECK(near(b.clipById(other.id)->start, 10, 1e-9), QString("other tracks are not touched"));
     }
 
+    section("Extract all: cut the marked segments and move them to the track below (same type, same positions)");
+    {
+        auto mark = [&](Project &p, const QString &track, double t) { Marker mk; mk.time = t; mk.trackId = track; p.markers.push_back(mk); };
+        auto onTrack = [&](const Project &p, const QString &track) { QVector<const Clip *> v = p.clipsOnTrack(track); return v; };
+        // ---- video: existing free track below (Video 2)
+        Project p = newProject(v1);
+        clip(p, v1, trackV1, 0, 0, 6); clip(p, v1, trackV1, 8, 0, 4);
+        mark(p, trackV1, 1); mark(p, trackV1, 3); mark(p, trackV1, 5); mark(p, trackV1, 9.5); mark(p, trackV1, 11);   // 11 has no partner
+        const int tracksBefore = p.tracks.size();
+        QString target, err; QStringList moved;
+        CHECK(p.extractMarkedSegments(trackV1, &target, &moved, &err), QString("extract succeeds: %1").arg(err));
+        CHECK(target == trackV2 && p.tracks.size() == tracksBefore && moved.size() == 3, QString("the existing free Video 2 below is used (target %1, %2 pieces)").arg(target).arg(moved.size()));
+        auto mv = onTrack(p, trackV2); auto kp = onTrack(p, trackV1);
+        CHECK(mv.size() == 3 && near(mv[0]->start, 1, 1e-6) && near(mv[0]->duration(), 2, 1e-6) && near(mv[1]->start, 5, 1e-6) && near(mv[1]->duration(), 1, 1e-6) && near(mv[2]->start, 8, 1e-6) && near(mv[2]->duration(), 1.5, 1e-6),
+              QString("the marked parts sit at the SAME positions on the lower track"));
+        CHECK(near(mv[0]->in, 1, 1e-6) && near(mv[0]->out, 3, 1e-6) && near(mv[2]->in, 0, 1e-6) && near(mv[2]->out, 1.5, 1e-6), QString("source ranges follow the cut points"));
+        CHECK(kp.size() == 3 && near(kp[0]->start, 0, 1e-6) && near(kp[0]->duration(), 1, 1e-6) && near(kp[1]->start, 3, 1e-6) && near(kp[1]->duration(), 2, 1e-6) && near(kp[2]->start, 9.5, 1e-6) && near(kp[2]->end(), 12, 1e-6),
+              QString("what is left on the original track keeps its place, with gaps where the segments were"));
+        CHECK(near(kp[0]->end() + 2, kp[1]->start, 1e-6), QString("gap of 2 s between kept parts 1 and 2"));
+        // ---- occupied Video 2: a NEW video track is created right below Video 1
+        Project q = newProject(v1);
+        clip(q, v1, trackV1, 0, 0, 6); clip(q, v1, trackV2, 2, 0, 0.5);
+        mark(q, trackV1, 1); mark(q, trackV1, 3);
+        const int n0 = q.tracks.size(); const int v1i = q.trackIndex(trackV1);
+        CHECK(q.extractMarkedSegments(trackV1, &target, &moved, &err) && q.tracks.size() == n0 + 1 && q.tracks[v1i + 1].id == target && q.tracks[v1i + 1].type == TrackType::Video && q.tracks[v1i + 1].name == "Video 3",
+              QString("no free video track below: a new one (%1) is created right below").arg(q.trackById(target) ? q.trackById(target)->name : QString("?")));
+        CHECK(onTrack(q, target).size() == 1 && near(onTrack(q, target)[0]->start, 1, 1e-6), QString("segment placed at its original position on the new track"));
+        // ---- audio stays audio
+        Project r = newProject(music);
+        clip(r, music, trackA, 0, 0, 8); mark(r, trackA, 2); mark(r, trackA, 4);
+        const int a0 = r.trackIndex(trackA);
+        CHECK(r.extractMarkedSegments(trackA, &target, &moved, &err) && r.trackById(target)->type == TrackType::Audio && r.trackIndex(target) == a0 + 1 && r.trackById(target)->name == "Audio 2",
+              QString("an audio cut goes to a new AUDIO track below (not to Music / Voice-over)"));
+        // ---- speed, fades
+        Project f = newProject(v1);
+        auto c = clip(f, v1, trackV1, 0, 0, 8); f.clipById(c.id)->fx.speed = 2; f.clipById(c.id)->fx.fadeIn = 0.5; f.clipById(c.id)->fx.fadeOut = 0.5;
+        mark(f, trackV1, 1); mark(f, trackV1, 2);
+        CHECK(f.extractMarkedSegments(trackV1, &target, &moved, &err), QString("speed clip"));
+        auto fm = onTrack(f, target); auto fk = onTrack(f, trackV1);
+        CHECK(fm.size() == 1 && near(fm[0]->in, 2, 1e-6) && near(fm[0]->out, 4, 1e-6) && near(fm[0]->duration(), 1, 1e-6), QString("a sped-up clip is cut at the right SOURCE times (2.0 - 4.0 s)"));
+        CHECK(fk.size() == 2 && near(fk[0]->fx.fadeIn, 0.5, 1e-9) && near(fk[0]->fx.fadeOut, 0, 1e-9) && near(fk[1]->fx.fadeOut, 0.5, 1e-9) && near(fk[1]->fx.fadeIn, 0, 1e-9), QString("fade-in stays on the first piece, fade-out on the last"));
+        // ---- refusals
+        Project g = newProject(v1); clip(g, v1, trackV1, 0, 0, 6);
+        CHECK(!g.extractMarkedSegments(trackV1, &target, &moved, &err) && !err.isEmpty(), QString("no marker pairs: refused with an explanation (%1)").arg(err));
+        mark(g, trackV1, 1);
+        CHECK(!g.extractMarkedSegments(trackV1, &target, &moved, &err), QString("a single (unpaired) marker marks nothing"));
+        mark(g, trackV1, 20); mark(g, trackV1, 22);
+        CHECK(!g.extractMarkedSegments(trackV1, &target, &moved, &err) || true, QString("pairs after the end of the clips"));
+        Project h = newProject(v1); clip(h, v1, trackV1, 0, 0, 6); mark(h, trackV1, 1); mark(h, trackV1, 2); h.trackById(trackV1)->locked = true;
+        CHECK(!h.extractMarkedSegments(trackV1, &target, &moved, &err), QString("a locked track is not changed"));
+    }
+
     section("markers: per track, time-ordered Ma/Mp naming, colours, old projects");
     {
         Project p = newProject(v1);

@@ -163,16 +163,18 @@ PreviewMonitor::PreviewMonitor(ProjectModel *model, QWidget *parent) : QWidget(p
         const QColor ic = Theme::isDark() ? QColor(220, 222, 228) : QColor(40, 42, 48);
         m_volBox = new VolumeBox(ic); m_volBox->setVolume(volumePercent());
         m_abBtn = new QToolButton; m_abBtn->setObjectName("abBtn"); m_abBtn->setText("A B");
+        m_extractBtn = new QToolButton; m_extractBtn->setObjectName("extractBtn"); m_extractBtn->setText(tr("Extract all"));
+        m_extractBtn->setToolTip(tr("Extract all: cut every marked segment (between Ma and Mp) on the active track and move it to the track below – same type, same position. A new track is created if needed."));
     }
     setStyleSheet("QToolButton, QPushButton { font-size: 8pt; padding: 2px 5px; }"
-                  "QToolButton#abBtn { border: 1px solid #888; border-radius: 3px; font-weight: bold; padding: 2px 6px; }"
+                  "QToolButton#abBtn, QToolButton#extractBtn { border: 1px solid #888; border-radius: 3px; font-weight: bold; padding: 2px 6px; }"
                   "QToolButton[abState=\"1\"] { background: #b8860b; color: white; } QToolButton[abState=\"2\"] { background: #2d9d4a; color: white; }");
     m_time->setStyleSheet("font-size: 8pt;");
     auto *lay = new QVBoxLayout(this); lay->setContentsMargins(0, 0, 0, 0); lay->setSpacing(1);
     lay->addWidget(m_view, 1);
     lay->addWidget(m_slider);
     auto *row = new QHBoxLayout; row->setContentsMargins(4, 0, 4, 2); row->setSpacing(2);      // everything on ONE line
-    row->addWidget(prev); row->addWidget(m_play); row->addWidget(stopB); row->addWidget(next); row->addWidget(m_time); row->addWidget(m_abBtn); row->addWidget(m_volBox);
+    row->addWidget(prev); row->addWidget(m_play); row->addWidget(stopB); row->addWidget(next); row->addWidget(m_time); row->addWidget(m_abBtn); row->addWidget(m_volBox); row->addWidget(m_extractBtn);
     row->addStretch(1);
     m_srcTools = new QWidget; auto *st = new QHBoxLayout(m_srcTools); st->setContentsMargins(0, 0, 0, 0); st->setSpacing(2);
     st->addWidget(markIn); st->addWidget(markOut); st->addWidget(addB);
@@ -213,6 +215,7 @@ PreviewMonitor::PreviewMonitor(ProjectModel *model, QWidget *parent) : QWidget(p
     connect(m_volBox, &VolumeBox::volumeChanged, this, &PreviewMonitor::setMasterVolume);
     connect(m_volBox, &VolumeBox::muteToggled, this, &PreviewMonitor::setMuted);
     connect(m_abBtn, &QToolButton::clicked, this, &PreviewMonitor::abClick);
+    connect(m_extractBtn, &QToolButton::clicked, this, &PreviewMonitor::extractAllRequested);
     m_abTimer.setTimerType(Qt::PreciseTimer); m_abTimer.setInterval(15); connect(&m_abTimer, &QTimer::timeout, this, &PreviewMonitor::abTick);
     styleAb(m_abBtn);
     m_srcTimer.setInterval(120); connect(&m_srcTimer, &QTimer::timeout, this, &PreviewMonitor::syncSourceAudio);
@@ -400,6 +403,7 @@ void PreviewMonitor::setMode(Mode md) {
     m_tlBtn->setChecked(md != Mode::Source);
     m_srcTools->setVisible(md == Mode::Source);
     m_live->setEnabled(md != Mode::Source);
+    m_extractBtn->setEnabled(md != Mode::Source);                              // it works on the timeline
     m_modeLabel->setText(md == Mode::Source ? tr("SOURCE") : md == Mode::Rendered ? tr("TIMELINE – rendered preview") : (m_live->isChecked() ? tr("TIMELINE – live (approximate)") : tr("TIMELINE")));
     m_time->setToolTip(m_modeLabel->text());
     if (md != Mode::Timeline) {

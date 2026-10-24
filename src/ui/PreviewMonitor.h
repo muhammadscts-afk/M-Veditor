@@ -154,6 +154,7 @@ signals:
     void addToTimelineRequested(const QString &mediaId, double in, double out);
     void message(const QString &text);
     void modeChanged();
+    void extractAllRequested();
 protected:
     bool eventFilter(QObject *o, QEvent *e) override;
     void resizeEvent(QResizeEvent *) override;
@@ -219,7 +220,7 @@ private:
     QTimer m_srcTimer, m_fsSync;
     FullscreenWindow *m_fs = nullptr;
     VolumeBox *m_volBox = nullptr;
-    QToolButton *m_abBtn = nullptr;
+    QToolButton *m_abBtn = nullptr, *m_extractBtn = nullptr;
     QTimer m_abTimer;
     int m_ab = 0;
     double m_abA = 0, m_abB = 0, m_master = 1.0;

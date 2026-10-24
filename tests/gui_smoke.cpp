@@ -559,6 +559,34 @@ int main(int argc, char **argv) {
         prev->abClick(); CHECK(prev->abState() == 0, "clicking the A B button stops the repeat");
         m->setPlayhead(0);
     }
+    std::cout << "- Extract all button" << std::endl;
+    {
+        auto *prev = w.findChild<PreviewMonitor *>();
+        QToolButton *ex = nullptr; for (auto *b : prev->findChildren<QToolButton *>()) if (b->text() == "Extract all") ex = b;
+        CHECK(ex != nullptr, "an 'Extract all' button sits beside the volume control");
+        Project saved = m->project(); const QString keepPath = m->filePath();
+        MediaItem v0; for (auto &mi : saved.media) if (mi.kind == "video") v0 = mi;
+        Project proj = Project::singleClip(v0, 0, 6); proj.tracks.clear(); proj.ensureDefaultTracks();
+        QString v1id, v2id; for (auto &t : proj.tracks) { if (t.name == "Video 1") v1id = t.id; if (t.name == "Video 2") v2id = t.id; }
+        proj.clips.clear();
+        Clip a; a.id = "ca"; a.mediaId = v0.id; a.trackId = v1id; a.start = 0; a.in = 0; a.out = 6; proj.clips.push_back(a);
+        Marker m1; m1.time = 1; m1.trackId = v1id; Marker m2; m2.time = 3; m2.trackId = v1id; proj.markers = {m1, m2};
+        m->reset(proj, QString());
+        m->setActiveTrack(v1id);
+        if (QWidget *f = QApplication::focusWidget()) f->clearFocus();
+        w.timeline()->zoomFit(); QTest::qWait(150); w.grab().save("/tmp/mveditor_extract_before.png");
+        if (ex) ex->click(); QTest::qWait(150);
+        w.grab().save("/tmp/mveditor_extract_after.png");
+        QVector<const Clip *> low = m->project().clipsOnTrack(v2id), up = m->project().clipsOnTrack(v1id);
+        CHECK(low.size() == 1 && near(low[0]->start, 1.0, 1e-6) && near(low[0]->duration(), 2.0, 1e-6), "clicking Extract all moved the marked part to the track below at the same position");
+        CHECK(up.size() == 2 && near(up[0]->end(), 1.0, 1e-6) && near(up[1]->start, 3.0, 1e-6), "the original track keeps the rest, with a gap where the part was");
+        CHECK(m->selectedClips().size() == 1, "the extracted segment is selected");
+        m->undoStack()->undo();
+        CHECK(m->project().clips.size() == 1 && m->project().trackById(v2id) && m->project().clipsOnTrack(v2id).isEmpty(), "everything happens in ONE undo step");
+        if (ex) { ex->click(); ex->click(); QTest::qWait(60); }                                  // second click: nothing new to extract (the pieces already moved)
+        CHECK(m->project().clipsOnTrack(v1id).size() == 2, "clicking again does not duplicate or damage anything");
+        m->reset(saved, keepPath);
+    }
     std::cout << "- Properties panel fits at minimum width (nothing cut off)" << std::endl;
     {
         w.resize(1366, 768);

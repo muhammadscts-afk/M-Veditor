@@ -194,6 +194,71 @@ void Project::closeAllGaps(const QString &trackId) {
     double pos = 0;
     for (const Clip *cp : clipsOnTrack(trackId)) { Clip *c = clipById(cp->id); c->start = pos; pos = c->end(); }
 }
+bool Project::extractMarkedSegments(const QString &trackId, QString *targetOut, QStringList *movedOut, QString *err) {
+    auto fail = [&](const QString &m) { if (err) *err = m; return false; };
+    const Track *tr0 = trackById(trackId);
+    if (!tr0) return fail(QObject::tr("Click a track first."));
+    if (tr0->locked) return fail(QObject::tr("This track is locked."));
+    const TrackType type = tr0->type;
+    const QVector<int> idx = markerIndexesOnTrack(trackId);
+    QVector<Gap> iv;                                           // marked areas = the pairs Ma..Mp; an odd last marker has no partner yet
+    for (int k = 0; k + 1 < idx.size(); k += 2) iv.push_back({markers[idx[k]].time, markers[idx[k + 1]].time});
+    if (iv.isEmpty()) return fail(QObject::tr("Mark the segments first: put markers in pairs (Ma ... Mp) on the active track."));
+
+    QVector<Clip> keep, moved;
+    QStringList removeIds;
+    for (const Clip *cp : clipsOnTrack(trackId)) {
+        const Clip c = *cp;
+        QVector<Gap> cuts;
+        for (const Gap &g : iv) { const double a = std::max(g.start, c.start), b = std::min(g.end, c.end()); if (b - a > 1e-3) cuts.push_back({a, b}); }
+        if (cuts.isEmpty()) continue;                          // not touched
+        QVector<QPair<Gap, bool>> parts;                       // alternating kept / extracted parts, in time order
+        double pos = c.start;
+        for (const Gap &g : cuts) { if (g.start - pos > 1e-3) parts.push_back({{pos, g.start}, false}); parts.push_back({g, true}); pos = g.end; }
+        if (c.end() - pos > 1e-3) parts.push_back({{pos, c.end()}, false});
+        for (int i = 0; i < parts.size(); ++i) {
+            Clip n = c; n.id = i == 0 ? c.id : newId("c");
+            n.start = parts[i].first.start;
+            n.in = c.in + (parts[i].first.start - c.start) * c.fx.speed;       // source time of the cut points (speed aware)
+            n.out = c.in + (parts[i].first.end - c.start) * c.fx.speed;
+            if (i > 0) { n.fx.fadeIn = 0; n.fx.transition = "none"; }
+            if (i < parts.size() - 1) n.fx.fadeOut = 0;
+            (parts[i].second ? moved : keep).push_back(n);
+        }
+        removeIds << c.id;
+    }
+    if (moved.isEmpty()) return fail(QObject::tr("There are no clips under the marked areas of this track."));
+
+    // target: the first track BELOW of the same type that is free at all the new positions
+    const int srcIdx = trackIndex(trackId);
+    QString target;
+    for (int i = srcIdx + 1; i < tracks.size() && target.isEmpty(); ++i) {
+        const Track &t = tracks[i];
+        if (t.type != type || t.locked) continue;
+        bool free = true;
+        for (const Clip &c : clips) if (c.trackId == t.id) for (const Clip &m : moved) if (m.start < c.end() - 1e-6 && m.end() > c.start + 1e-6) free = false;
+        if (free) target = t.id;
+    }
+    if (target.isEmpty()) {                                    // none: create one of the same type right below the edited track
+        static const QHash<int, QString> base = {{int(TrackType::Video), "Video"}, {int(TrackType::Audio), "Audio"}, {int(TrackType::Music), "Music"},
+                                                 {int(TrackType::Voice), "Voice-over"}, {int(TrackType::Title), "Titles"}};
+        Track nt; nt.id = newId("t"); nt.type = type; nt.height = tr0->height; nt.volume = tr0->volume;
+        int count = 1; for (const Track &t : tracks) if (t.type == type) ++count;
+        auto taken = [&](const QString &name) { for (const Track &t : tracks) if (t.name == name) return true; return false; };
+        QString name = QString("%1 %2").arg(base[int(type)]).arg(count);
+        while (taken(name)) name = QString("%1 %2").arg(base[int(type)]).arg(++count);
+        nt.name = name; target = nt.id;
+        tracks.insert(srcIdx + 1, nt);
+    }
+    clips.erase(std::remove_if(clips.begin(), clips.end(), [&](const Clip &c) { return removeIds.contains(c.id); }), clips.end());
+    for (const Clip &c : keep) clips.push_back(c);
+    QStringList movedIds;
+    for (Clip c : moved) { c.trackId = target; movedIds << c.id; clips.push_back(c); }
+    if (targetOut) *targetOut = target;
+    if (movedOut) *movedOut = movedIds;
+    return true;
+}
+
 QString Project::markerTrack(const Marker &m) const { return m.trackId.isEmpty() ? firstTrackOfType(TrackType::Video) : m.trackId; }
 QVector<int> Project::markerIndexesOnTrack(const QString &trackId) const {
     QVector<int> v;
