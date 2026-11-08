@@ -29,13 +29,18 @@ class SeekSlider : public QSlider {
     Q_OBJECT
 public:
     explicit SeekSlider(Qt::Orientation o, QWidget *parent = nullptr) : QSlider(o, parent) {}
-    void setLoop(double a, double b) { m_la = a; m_lb = b; update(); }      // A-B repeat range as fractions (negative = none)
+    void setLoop(double a, double b) { m_la = a; m_lb = b; update(); }
+    void setMarks(const QVector<double> &fractions) { m_marks = fractions; update(); }   // marker lines drawn over the blue bar      // A-B repeat range as fractions (negative = none)
 signals:
     void seekRequested(double fraction);
     void dragStateChanged(bool down);
 protected:
     void paintEvent(QPaintEvent *e) override {
         QSlider::paintEvent(e);
+        if (!m_marks.isEmpty()) {                                           // the marking lines continue up over the seek bar (about 0.5 mm)
+            QPainter p(this); const double pad = 9, w = width() - 2 * pad;
+            for (double f : m_marks) p.fillRect(QRectF(pad + f * w - 1, 11, 2, height() - 11), QColor(250, 190, 40));
+        }
         if (m_la >= 0 && m_lb >= m_la) {
             QPainter p(this); const double pad = 9, w = width() - 2 * pad;
             const QRectF r(pad + m_la * w, height() / 2.0 - 7, std::max(2.0, (m_lb - m_la) * w), 14);
@@ -58,6 +63,34 @@ private:
     }
     bool m_down = false;
     double m_la = -1, m_lb = -1;
+    QVector<double> m_marks;
+};
+
+// The marking bar under the seek bar: the markers and pair colours of the active track, in step with the timeline.
+class MarkingBar : public QWidget {
+    Q_OBJECT
+public:
+    struct Mark { double f = 0; QString label; bool first = true; };
+    struct Pair { double a = 0, b = 0; QColor c; };
+    explicit MarkingBar(QWidget *parent = nullptr);
+    void setData(const QVector<Mark> &marks, const QVector<Pair> &pairs);
+    int markCount() const { return m_marks.size(); }
+    int pairCount() const { return m_pairs.size(); }
+    QColor pairColor(int i) const { return m_pairs.value(i).c; }
+    static int stripHeight(const QWidget *w);          // never more than 5 mm on this screen
+signals:
+    void seekRequested(double fraction);
+    void dragStateChanged(bool down);
+protected:
+    void paintEvent(QPaintEvent *) override;
+    void mousePressEvent(QMouseEvent *) override;
+    void mouseMoveEvent(QMouseEvent *) override;
+    void mouseReleaseEvent(QMouseEvent *) override;
+private:
+    void seekTo(double x);
+    QVector<Mark> m_marks;
+    QVector<Pair> m_pairs;
+    bool m_down = false;
 };
 
 QIcon uiIcon(const QString &kind, const QColor &color);      // small icons drawn in any colour (the style's own icons are dark and vanish on a dark bar)
@@ -91,6 +124,7 @@ public:
     QLabel *time = nullptr;
     QToolButton *play = nullptr, *abBtn = nullptr;
     VolumeBox *vol = nullptr;
+    MarkingBar *marks = nullptr;
     bool barVisible() const { return m_bar->isVisible(); }
     QWidget *viewport() const { return m_view->viewport(); }
     void showBar();
@@ -136,6 +170,8 @@ public:
     void toggleFullscreen();
     bool isFullscreen() const { return m_fs != nullptr; }
     QGraphicsView *view() const { return m_view; }
+    MarkingBar *markingBar() const { return m_markBar; }
+    SeekSlider *seekSlider() const { return m_slider; }
     // volume (applies to everything the preview plays)
     void setMasterVolume(int percent);
     void setMuted(bool muted);
@@ -183,6 +219,7 @@ private:
     void ensureVoices();
     void releaseLive();
     void syncSourceAudio();
+    void updateMarkingBar();
     double mvol(double v) const { return std::clamp(v * (m_muted ? 0.0 : m_master), 0.0, 1.0); }
     void applyMasterNow();
     void abClear();
@@ -220,6 +257,7 @@ private:
     QTimer m_srcTimer, m_fsSync;
     FullscreenWindow *m_fs = nullptr;
     VolumeBox *m_volBox = nullptr;
+    MarkingBar *m_markBar = nullptr;
     QToolButton *m_abBtn = nullptr, *m_extractBtn = nullptr;
     QTimer m_abTimer;
     int m_ab = 0;

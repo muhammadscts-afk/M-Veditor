@@ -1,6 +1,7 @@
 #include "PreviewMonitor.h"
 #include "AppSettings.h"
 #include "Theme.h"
+#include "TimelineView.h"
 #include "MediaProbe.h"
 #include <QFileInfo>
 #include <QCloseEvent>
@@ -31,6 +32,54 @@ QIcon uiIcon(const QString &kind, const QColor &c) {
         else { p.drawLine(QPointF(32, 17), QPointF(44, 31)); p.drawLine(QPointF(44, 17), QPointF(32, 31)); }
     }
     return QIcon(pm);
+}
+
+// ---- marking bar
+int MarkingBar::stripHeight(const QWidget *w) {
+    const double dpi = w && w->logicalDpiY() > 0 ? w->logicalDpiY() : 96.0;
+    return std::clamp(int(std::floor(4.8 * dpi / 25.4)), 12, 40);       // 4.8 mm: under the 5 mm limit (18 px at normal scaling)
+}
+MarkingBar::MarkingBar(QWidget *parent) : QWidget(parent) {
+    setFixedHeight(stripHeight(this));
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    setToolTip(tr("Marking bar: the markers and coloured pairs of the active track (click to seek)"));
+}
+void MarkingBar::setData(const QVector<Mark> &marks, const QVector<Pair> &pairs) { m_marks = marks; m_pairs = pairs; update(); }
+void MarkingBar::paintEvent(QPaintEvent *) {
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing, false);
+    const double pad = 9, w = width() - 2 * pad;
+    const int h = height();
+    p.fillRect(QRect(int(pad) - 1, 0, int(w) + 2, h), Theme::isDark() ? QColor(255, 255, 255, 16) : QColor(0, 0, 0, 14));
+    for (const Pair &pr : m_pairs) {                                           // the coloured areas between Ma and Mp
+        const int x0 = int(pad + pr.a * w), x1 = int(pad + pr.b * w);
+        if (x1 > x0) p.fillRect(QRect(x0, 0, x1 - x0, h), pr.c);
+    }
+    QFont f = font(); f.setPixelSize(std::max(8, h - 8)); f.setBold(true); p.setFont(f);
+    for (int i = 0; i < m_marks.size(); ++i) {
+        const Mark &m = m_marks[i];
+        const int x = int(pad + m.f * w);
+        p.fillRect(QRect(x - 1, 0, 2, h), QColor(250, 190, 40));                // the marking line
+        // label: "Ma" to the right of its line, "Mp" to the left of its line (inside the coloured area); skipped when there is no room
+        const int tw = QFontMetrics(f).horizontalAdvance(m.label);
+        double nb = 1e9;
+        for (int j = 0; j < m_marks.size(); ++j) if (j != i) { const double d = std::fabs(m_marks[j].f - m.f) * w; if (d > 1 && d < nb) nb = d; }
+        if (nb < 2 * tw + 12) continue;                                          // not enough room for both labels of a pair
+        const QRect tr = m.first ? QRect(x + 3, 0, tw + 2, h) : QRect(x - tw - 5, 0, tw + 2, h);
+        p.setPen(QColor(0, 0, 0, 200)); p.drawText(tr.translated(1, 1), Qt::AlignVCenter | Qt::AlignLeft, m.label);
+        p.setPen(Qt::white); p.drawText(tr, Qt::AlignVCenter | Qt::AlignLeft, m.label);
+    }
+}
+void MarkingBar::seekTo(double x) { const double pad = 9; emit seekRequested(std::clamp((x - pad) / std::max(1.0, width() - 2 * pad), 0.0, 1.0)); }
+void MarkingBar::mousePressEvent(QMouseEvent *e) { if (e->button() == Qt::LeftButton) { m_down = true; emit dragStateChanged(true); seekTo(e->position().x()); } }
+void MarkingBar::mouseMoveEvent(QMouseEvent *e) { if (m_down) seekTo(e->position().x()); }
+void MarkingBar::mouseReleaseEvent(QMouseEvent *) { if (m_down) { m_down = false; emit dragStateChanged(false); } }
+
+// the seek bar with the marking bar directly under it
+static QWidget *seekColumn(SeekSlider *slider, MarkingBar *bar) {
+    auto *c = new QWidget; auto *l = new QVBoxLayout(c); l->setContentsMargins(0, 0, 0, 0); l->setSpacing(0);
+    l->addWidget(slider); l->addWidget(bar);
+    return c;
 }
 
 VolumeBox::VolumeBox(const QColor &col, QWidget *parent) : QWidget(parent), m_color(col) {
@@ -71,13 +120,14 @@ FullscreenWindow::FullscreenWindow(QGraphicsView *view) : QWidget(nullptr, Qt::W
     play = new QToolButton; play->setIcon(uiIcon("play", white)); play->setIconSize(QSize(26, 26)); play->setFocusPolicy(Qt::NoFocus);
     vol = new VolumeBox(white);
     time = new QLabel("00:00.000 / 00:00.000"); time->setMinimumWidth(190);
-    slider = new SeekSlider(Qt::Horizontal); slider->setRange(0, 10000); slider->setFocusPolicy(Qt::NoFocus);
+    slider = new SeekSlider(Qt::Horizontal); slider->setRange(0, 10000); slider->setFocusPolicy(Qt::NoFocus); slider->setFixedHeight(20);
+    marks = new MarkingBar;
     slider->setStyleSheet("QSlider::groove:horizontal { height: 8px; background: #50545e; border-radius: 4px; } QSlider::sub-page:horizontal { background: #2d7ff9; border-radius: 4px; }"
                           "QSlider::handle:horizontal { width: 18px; margin: -6px 0; border-radius: 9px; background: #ff4757; border: 2px solid #ffffff; }");
     abBtn = new QToolButton; abBtn->setObjectName("abBtn"); abBtn->setText("A B"); abBtn->setFocusPolicy(Qt::NoFocus);
     auto *exitB = new QToolButton; exitB->setText(tr("Exit full screen (Esc)")); exitB->setFocusPolicy(Qt::NoFocus);
     auto *lay = new QHBoxLayout(m_bar); lay->setContentsMargins(14, 8, 14, 8); lay->setSpacing(10);
-    lay->addWidget(play); lay->addWidget(vol); lay->addWidget(time); lay->addWidget(slider, 1); lay->addWidget(abBtn); lay->addWidget(exitB);
+    lay->addWidget(play); lay->addWidget(vol); lay->addWidget(time); lay->addWidget(seekColumn(slider, marks), 1); lay->addWidget(abBtn); lay->addWidget(exitB);
     connect(play, &QToolButton::clicked, this, &FullscreenWindow::togglePlayRequested);
     connect(exitB, &QToolButton::clicked, this, &FullscreenWindow::exitRequested);
     m_hide.setSingleShot(true); m_hide.setInterval(2500);
@@ -101,7 +151,7 @@ void FullscreenWindow::closeEvent(QCloseEvent *e) { e->ignore(); emit exitReques
 void FullscreenWindow::showEvent(QShowEvent *) { m_view->setGeometry(rect()); m_view->show(); m_bar->raise(); }
 void FullscreenWindow::resizeEvent(QResizeEvent *) {
     m_view->setGeometry(rect());
-    m_bar->setGeometry(0, height() - 60, width(), 60); m_bar->raise();
+    m_bar->setGeometry(0, height() - 70, width(), 70); m_bar->raise();
 }
 bool FullscreenWindow::eventFilter(QObject *o, QEvent *e) {
     if (o == m_bar && (e->type() == QEvent::MouseMove || e->type() == QEvent::Enter)) showBar();
@@ -172,7 +222,8 @@ PreviewMonitor::PreviewMonitor(ProjectModel *model, QWidget *parent) : QWidget(p
     m_time->setStyleSheet("font-size: 8pt;");
     auto *lay = new QVBoxLayout(this); lay->setContentsMargins(0, 0, 0, 0); lay->setSpacing(1);
     lay->addWidget(m_view, 1);
-    lay->addWidget(m_slider);
+    m_markBar = new MarkingBar;
+    lay->addWidget(seekColumn(m_slider, m_markBar));                          // seek bar + marking bar right under it
     auto *row = new QHBoxLayout; row->setContentsMargins(4, 0, 4, 2); row->setSpacing(2);      // everything on ONE line
     row->addWidget(prev); row->addWidget(m_play); row->addWidget(stopB); row->addWidget(next); row->addWidget(m_time); row->addWidget(m_abBtn); row->addWidget(m_volBox); row->addWidget(m_extractBtn);
     row->addStretch(1);
@@ -228,6 +279,9 @@ PreviewMonitor::PreviewMonitor(ProjectModel *model, QWidget *parent) : QWidget(p
     });
     connect(m_slider, &SeekSlider::dragStateChanged, this, [this](bool d) { m_sliderDrag = d; });
     connect(m_slider, &SeekSlider::seekRequested, this, &PreviewMonitor::onSeek);
+    connect(m_markBar, &MarkingBar::seekRequested, this, &PreviewMonitor::onSeek);
+    connect(m_markBar, &MarkingBar::dragStateChanged, this, [this](bool d) { m_sliderDrag = d; });
+    connect(m, &ProjectModel::activeTrackChanged, this, &PreviewMonitor::updateMarkingBar);
     wire(m_player); wire(m_pre.pl);
     connect(m_video, &QGraphicsVideoItem::nativeSizeChanged, this, [this] { fit(); });
     m_timer.setTimerType(Qt::PreciseTimer); m_timer.setInterval(16);
@@ -336,11 +390,14 @@ void PreviewMonitor::enterFullscreen() {
     connect(m_fs, &FullscreenWindow::exitRequested, this, &PreviewMonitor::exitFullscreen);
     connect(m_fs, &FullscreenWindow::togglePlayRequested, this, &PreviewMonitor::togglePlay);
     connect(m_fs->slider, &SeekSlider::seekRequested, this, &PreviewMonitor::onSeek);
+    connect(m_fs->marks, &MarkingBar::seekRequested, this, &PreviewMonitor::onSeek);
+    connect(m_fs->marks, &MarkingBar::dragStateChanged, this, [this](bool d) { m_sliderDrag = d; });
     connect(m_fs->slider, &SeekSlider::dragStateChanged, this, [this](bool d) { m_sliderDrag = d; });
     connect(m_fs->abBtn, &QToolButton::clicked, this, &PreviewMonitor::abClick);
     connect(m_fs->vol, &VolumeBox::volumeChanged, this, &PreviewMonitor::setMasterVolume);
     connect(m_fs->vol, &VolumeBox::muteToggled, this, &PreviewMonitor::setMuted);
     m_fs->vol->setVolume(volumePercent()); m_fs->vol->setMuted(m_muted);
+    updateMarkingBar();
     if (QScreen *sc = window()->screen()) m_fs->setGeometry(sc->geometry());       // on the screen the editor is on
     m_fs->showFullScreen(); m_view->show(); m_fs->setFocus(); m_fs->showBar();
     updateAbUi();
@@ -413,7 +470,7 @@ void PreviewMonitor::setMode(Mode md) {
     }
     if (md != Mode::Rendered) m_smooth.stop();
     if (md != Mode::Source) m_srcTimer.stop();
-    updateLiveNote(); updateBadge();
+    updateLiveNote(); updateBadge(); updateMarkingBar();
     emit modeChanged();
 }
 
@@ -860,6 +917,7 @@ void PreviewMonitor::onProjectChanged() {
 }
 
 void PreviewMonitor::updateTimeLabel() {
+    updateMarkingBar();
     if (m_mode == Mode::Timeline) {
         const double dur = m->project().duration();
         m_time->setText(humanTime(m->playhead(), true) + " / " + humanTime(dur, true));
@@ -929,6 +987,24 @@ void PreviewMonitor::styleAb(QToolButton *b) {
                 : m_ab == 1 ? tr("Click again to mark the END (B). The part between A and B will then repeat")
                             : tr("Repeating A–B. Click to stop repeating"));
 }
+void PreviewMonitor::updateMarkingBar() {
+    if (!m_markBar) return;
+    const Project &p = m->project();
+    QVector<MarkingBar::Mark> marks; QVector<MarkingBar::Pair> pairs; QVector<double> lines;
+    const double dur = abDuration();
+    if (m_mode != Mode::Source && dur > 0) {                                  // markers belong to the timeline, not to a source
+        const QString tid = m->activeTrack();
+        const QVector<int> idx = p.markerIndexesOnTrack(tid);
+        for (int k = 0; k < idx.size(); ++k) {
+            const double f = std::clamp(p.markers[idx[k]].time / dur, 0.0, 1.0);
+            marks.push_back({f, p.markerLabel(idx[k]), k % 2 == 0}); lines.push_back(f);
+        }
+        for (int k = 0; k + 1 < idx.size(); k += 2) { QColor c = TimelineView::pairColor(p, tid, k / 2); c.setAlpha(215); pairs.push_back({marks[k].f, marks[k + 1].f, c}); }
+    }
+    m_markBar->setData(marks, pairs); m_slider->setMarks(lines);
+    if (m_fs) { m_fs->marks->setData(marks, pairs); m_fs->slider->setMarks(lines); }
+}
+
 void PreviewMonitor::updateAbUi() {
     const double dur = abDuration();
     double fa = -1, fb = -1;

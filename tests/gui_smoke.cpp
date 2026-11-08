@@ -587,6 +587,60 @@ int main(int argc, char **argv) {
         CHECK(m->project().clipsOnTrack(v1id).size() == 2, "clicking again does not duplicate or damage anything");
         m->reset(saved, keepPath);
     }
+    std::cout << "- marking bar under the seek bar, in step with the timeline markers" << std::endl;
+    {
+        auto *prev = w.findChild<PreviewMonitor *>();
+        QToolButton *tlb3 = nullptr; for (auto *b : prev->findChildren<QToolButton *>()) if (b->text() == "Timeline") tlb3 = b;
+        if (tlb3) tlb3->click();
+        Project saved = m->project(); const QString keepPath = m->filePath();
+        MediaItem v0; for (auto &mi : saved.media) if (mi.kind == "video") v0 = mi;
+        Project proj = Project::singleClip(v0, 0, 8.0); proj.tracks.clear(); proj.ensureDefaultTracks();
+        QString v1id, v2id; for (auto &t : proj.tracks) { if (t.name == "Video 1") v1id = t.id; if (t.name == "Video 2") v2id = t.id; }
+        proj.clips[0].trackId = v1id;
+        auto mk = [&](double t, const QString &tr, const QString &col = QString()) { Marker x; x.time = t; x.trackId = tr; x.color = col; return x; };
+        proj.markers = {mk(1, v1id, "#39ff14"), mk(3, v1id), mk(5, v1id), mk(7, v1id), mk(2, v2id)};
+        m->reset(proj, QString()); m->setActiveTrack(v1id); QTest::qWait(250);
+        MarkingBar *mb = prev->markingBar(); SeekSlider *sl = prev->seekSlider();
+        CHECK(mb != nullptr && sl != nullptr, "a marking bar exists");
+        const double mm = mb->height() * 25.4 / std::max(1, mb->logicalDpiY());
+        CHECK(mm <= 5.0 && mm >= 2.5, QString("the marking bar is %1 mm high (limit 5 mm)").arg(mm, 0, 'f', 2));
+        const int gap = mb->mapTo(prev, QPoint(0, 0)).y() - sl->mapTo(prev, QPoint(0, sl->height())).y();
+        CHECK(gap >= 0 && gap <= 2, QString("it sits directly under the seek bar (gap %1 px)").arg(gap));
+        CHECK(mb->markCount() == 4 && mb->pairCount() == 2, QString("it shows the 4 markers / 2 pairs of the active track (%1 / %2)").arg(mb->markCount()).arg(mb->pairCount()));
+        CHECK(mb->pairColor(0).rgb() == TimelineView::pairColor(m->project(), v1id, 0).rgb() && mb->pairColor(1).rgb() == TimelineView::pairColor(m->project(), v1id, 1).rgb(), "the pair colours are exactly the timeline's colours");
+        const int ma = m->project().markerIndexesOnTrack(v1id).first();
+        m->mutate("colour", [&](Project &p) { p.markers[ma].color = "#ff9100"; });
+        CHECK(mb->pairColor(0).red() == 0xff && mb->pairColor(0).green() == 0x91, "changing the colour on the timeline changes it on the marking bar");
+        m->setActiveTrack(v2id);
+        CHECK(mb->markCount() == 1 && mb->pairCount() == 0, "switching the active track shows that track's markers (1 marker, no pair yet)");
+        m->setActiveTrack(v1id); m->setPlayhead(7.6); w.findChild<QAction *>("marker")->trigger();
+        CHECK(mb->markCount() == 5 && mb->pairCount() == 2, "the M key adds a marker to the bar at once (odd marker waits for its partner)");
+        m->undoStack()->undo();
+        // the amber marker lines continue over the seek bar
+        QTest::qWait(150);
+        const QImage img = prev->grab().toImage();
+        const double fr = 3.0 / 8.0; const int x = int(9 + fr * (sl->width() - 18));
+        const QPoint pt = sl->mapTo(prev, QPoint(x, sl->height() - 4));
+        const QColor c = img.pixelColor(pt);
+        CHECK(c.red() > 200 && c.green() > 140 && c.blue() < 120, QString("the marking line is drawn over the seek bar (pixel %1,%2,%3)").arg(c.red()).arg(c.green()).arg(c.blue()));
+        const QPoint ptBar = mb->mapTo(prev, QPoint(x, mb->height() / 2));
+        const QColor c2 = img.pixelColor(ptBar);
+        CHECK(c2.red() > 200 && c2.green() > 140 && c2.blue() < 120, "and the same line continues through the marking bar");
+        prev->grab().save("/tmp/mveditor_markbar.png");
+        // full screen keeps the marking bar
+        prev->toggleFullscreen(); QTest::qWait(400);
+        FullscreenWindow *fs = prev->fullscreenWindow();
+        const double mm2 = fs && fs->marks ? fs->marks->height() * 25.4 / std::max(1, fs->marks->logicalDpiY()) : 99;
+        CHECK(fs && fs->marks && fs->marks->markCount() == 4 && fs->marks->pairCount() == 2 && mm2 <= 5.0, QString("the marking bar is kept in full screen (%1 markers, %2 mm)").arg(fs && fs->marks ? fs->marks->markCount() : -1).arg(mm2, 0, 'f', 2));
+        if (fs) fs->grab().save("/tmp/mveditor_markbar_fs.png");
+        if (fs) { QTest::keyClick(fs, Qt::Key_Escape); QTest::qWait(250); }
+        // a source has no timeline markers
+        QString vidId; for (auto &mi : saved.media) if (mi.kind == "video") vidId = mi.id;
+        m->reset(saved, keepPath);
+        prev->playSource(vidId); QTest::qWait(150);
+        CHECK(mb->markCount() == 0, "in Source mode the bar is empty");
+        if (tlb3) tlb3->click();
+    }
     std::cout << "- Properties panel fits at minimum width (nothing cut off)" << std::endl;
     {
         w.resize(1366, 768);
