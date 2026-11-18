@@ -200,9 +200,10 @@ bool Project::extractMarkedSegments(const QString &trackId, QString *targetOut, 
     if (!tr0) return fail(QObject::tr("Click a track first."));
     if (tr0->locked) return fail(QObject::tr("This track is locked."));
     const TrackType type = tr0->type;
-    const QVector<int> idx = markerIndexesOnTrack(trackId);
-    QVector<Gap> iv;                                           // marked areas = the pairs Ma..Mp; an odd last marker has no partner yet
-    for (int k = 0; k + 1 < idx.size(); k += 2) iv.push_back({markers[idx[k]].time, markers[idx[k + 1]].time});
+    QVector<Gap> iv;                                           // marked areas = the pairs Ma..Mp; single markers are ignored
+    for (const MarkerPair &mp : markerPairsOnTrack(trackId)) iv.push_back({markers[mp.start].time, markers[mp.end].time});
+    std::sort(iv.begin(), iv.end(), [](const Gap &a, const Gap &b) { return a.start < b.start; });
+    { QVector<Gap> merged; for (const Gap &g : iv) { if (!merged.isEmpty() && g.start <= merged.last().end + 1e-9) merged.last().end = std::max(merged.last().end, g.end); else merged.push_back(g); } iv = merged; }
     if (iv.isEmpty()) return fail(QObject::tr("Mark the segments first: put markers in pairs (Ma ... Mp) on the active track."));
 
     QVector<Clip> keep, moved;
@@ -266,11 +267,59 @@ QVector<int> Project::markerIndexesOnTrack(const QString &trackId) const {
     std::sort(v.begin(), v.end(), [&](int a, int b) { return markers[a].time < markers[b].time; });
     return v;
 }
+QVector<MarkerPair> Project::markerPairsOnTrack(const QString &trackId) const {
+    QVector<MarkerPair> out;
+    for (int i = 0; i < markers.size(); ++i) {                                       // explicit pairs
+        const Marker &m = markers[i];
+        if (markerTrack(m) != trackId || m.id.isEmpty() || m.end || m.partner.isEmpty()) continue;
+        for (int j = 0; j < markers.size(); ++j) if (markers[j].id == m.partner) { out.push_back({i, j}); break; }
+    }
+    QVector<int> legacy;                                                              // markers without an id: by time order (old behaviour)
+    for (int i = 0; i < markers.size(); ++i) if (markerTrack(markers[i]) == trackId && markers[i].id.isEmpty()) legacy.push_back(i);
+    std::sort(legacy.begin(), legacy.end(), [&](int a, int b) { return markers[a].time < markers[b].time; });
+    for (int k = 0; k + 1 < legacy.size(); k += 2) out.push_back({legacy[k], legacy[k + 1]});
+    std::sort(out.begin(), out.end(), [&](const MarkerPair &a, const MarkerPair &b) { return markers[a.start].time < markers[b.start].time; });
+    return out;
+}
+bool Project::markerIsEnd(int index) const {
+    if (index < 0 || index >= markers.size()) return false;
+    const Marker &m = markers[index];
+    if (!m.id.isEmpty()) return m.end && !m.partner.isEmpty();
+    for (const MarkerPair &p : markerPairsOnTrack(markerTrack(m))) if (p.end == index) return true;
+    return false;
+}
+int Project::markerPairStart(int index) const {
+    if (index < 0 || index >= markers.size()) return index;
+    for (const MarkerPair &p : markerPairsOnTrack(markerTrack(markers[index]))) if (p.start == index || p.end == index) return p.start;
+    return index;
+}
+int Project::addMarker(double time, const QString &trackId) {
+    int open = -1;
+    for (int i = markers.size() - 1; i >= 0; --i) {                                 // the most recent single Ma of this track
+        const Marker &o = markers[i];
+        if (markerTrack(o) == trackId && !o.id.isEmpty() && !o.end && o.partner.isEmpty()) { open = i; break; }
+    }
+    Marker mk; mk.id = newId("k"); mk.time = time; mk.trackId = trackId;
+    markers.push_back(mk);
+    const int idx = markers.size() - 1;
+    if (open >= 0) {
+        Marker &a = markers[open]; Marker &b = markers[idx];
+        a.partner = b.id; b.partner = a.id;
+        if (time >= a.time) b.end = true;
+        else { a.end = true; b.end = false; b.color = a.color; a.color.clear(); }          // the earlier one is always Ma
+    }
+    return idx;
+}
+void Project::removeMarker(int index) {
+    if (index < 0 || index >= markers.size()) return;
+    const Marker m = markers[index];
+    if (!m.partner.isEmpty()) for (Marker &o : markers) if (o.id == m.partner) { o.partner.clear(); o.end = false; if (o.color.isEmpty()) o.color = m.color; }
+    markers.removeAt(index);
+}
 QString Project::markerLabel(int index) const {
     if (index < 0 || index >= markers.size()) return {};
     if (!markers[index].name.isEmpty()) return markers[index].name;
-    const QVector<int> idx = markerIndexesOnTrack(markerTrack(markers[index]));
-    return idx.indexOf(index) % 2 == 0 ? QStringLiteral("Ma") : QStringLiteral("Mp");
+    return markerIsEnd(index) ? QStringLiteral("Mp") : QStringLiteral("Ma");
 }
 bool Project::trackAudible(const Track &t) const {
     bool anySolo = false;
@@ -296,6 +345,7 @@ void Project::ensureDefaultTracks() {
     if (!tracks.isEmpty()) return;
     auto add = [&](const QString &n, TrackType t) { Track tr; tr.id = newId("t"); tr.name = n; tr.type = t; tracks.push_back(tr); };
     add("Titles", TrackType::Title);
+    add("Captions", TrackType::Title);      // a second text track: a title and a caption can show at the same time
     add("Video 1", TrackType::Video);   // video tracks lower in the list are drawn on top of those above
     add("Video 2", TrackType::Video);
     add("Audio 1", TrackType::Audio);
@@ -337,7 +387,7 @@ QJsonObject Project::toJson(const QString &projectFilePath) const {
     QJsonArray c; for (auto &x : clips) c.push_back(x.toJson());
     o["clips"] = c;
     QJsonArray mk;
-    for (auto &x : markers) { QJsonObject j; j["time"] = x.time; j["name"] = x.name; if (!x.color.isEmpty()) j["color"] = x.color; if (!x.trackId.isEmpty()) j["trackId"] = x.trackId; mk.push_back(j); }
+    for (auto &x : markers) { QJsonObject j; j["time"] = x.time; j["name"] = x.name; if (!x.color.isEmpty()) j["color"] = x.color; if (!x.trackId.isEmpty()) j["trackId"] = x.trackId; if (!x.id.isEmpty()) { j["id"] = x.id; j["end"] = x.end; if (!x.partner.isEmpty()) j["partner"] = x.partner; } mk.push_back(j); }
     o["markers"] = mk;
     return o;
 }
@@ -364,9 +414,21 @@ Project Project::fromJson(const QJsonObject &o, const QString &projectFilePath, 
     for (auto v : o["tracks"].toArray()) p.tracks.push_back(Track::fromJson(v.toObject()));
     for (auto v : o["clips"].toArray()) p.clips.push_back(Clip::fromJson(v.toObject()));
     for (auto v : o["markers"].toArray()) { Marker m; m.time = v.toObject()["time"].toDouble(); m.name = v.toObject()["name"].toString(); m.color = v.toObject()["color"].toString(); m.trackId = v.toObject()["trackId"].toString();
+        m.id = v.toObject()["id"].toString(); m.partner = v.toObject()["partner"].toString(); m.end = v.toObject()["end"].toBool();
         static const QRegularExpression autoName("^M\\d+$"); if (autoName.match(m.name).hasMatch()) m.name.clear();   // old automatic names -> Ma/Mp
         p.markers.push_back(m); }
     p.ensureDefaultTracks();
+    // projects saved before explicit pairs: pair their markers by time order once, then keep them explicit
+    for (const Track &t : p.tracks) {
+        QVector<int> legacy;
+        for (int i = 0; i < p.markers.size(); ++i) if (p.markerTrack(p.markers[i]) == t.id && p.markers[i].id.isEmpty()) legacy.push_back(i);
+        std::sort(legacy.begin(), legacy.end(), [&](int a, int b) { return p.markers[a].time < p.markers[b].time; });
+        for (int k = 0; k < legacy.size(); ++k) p.markers[legacy[k]].id = newId("k");
+        for (int k = 0; k + 1 < legacy.size(); k += 2) {
+            Marker &a = p.markers[legacy[k]], &b = p.markers[legacy[k + 1]];
+            a.partner = b.id; b.partner = a.id; a.end = false; b.end = true;
+        }
+    }
     return p;
 }
 

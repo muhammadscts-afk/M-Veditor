@@ -19,6 +19,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QKeyEvent>
+#include <QSignalSpy>
 #include <QSlider>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -123,12 +124,27 @@ int main(int argc, char **argv) {
         CHECK(names.indexOf("Video 1") >= 0 && names.indexOf("Video 1") < names.indexOf("Video 2"), "Video 1 is listed above Video 2 (ascending)");
         QToolButton *addBtn = nullptr;
         for (auto *b : w.timeline()->viewport()->findChildren<QToolButton *>()) if (b->text().contains("Add track")) addBtn = b;
-        CHECK(addBtn && addBtn->menu() && addBtn->menu()->actions().size() == 5, "Add track button with a 5-entry drop-down menu");
+        CHECK(addBtn && addBtn->menu() && addBtn->menu()->actions().size() == 6, "Add track button with a 6-entry drop-down menu (video, audio, music, voice-over, title, caption)");
         const int before = m->project().tracks.size();
         if (addBtn && addBtn->menu()) addBtn->menu()->actions().first()->trigger();
         CHECK(m->project().tracks.size() == before + 1, "Add track > Video track adds a track");
-        int v3 = -1, v2 = -1; for (int i = 0; i < m->project().tracks.size(); ++i) { if (m->project().tracks[i].name == "Video 3") v3 = i; if (m->project().tracks[i].name == "Video 2") v2 = i; }
-        CHECK(v3 == v2 + 1, "new video track is numbered 3 and placed under Video 2");
+        int v3 = -1, v1 = -1; for (int i = 0; i < m->project().tracks.size(); ++i) { if (m->project().tracks[i].name == "Video 3") v3 = i; if (m->project().tracks[i].name == "Video 1") v1 = i; }
+        CHECK(v3 == v1 + 1, "the new video track is placed DIRECTLY UNDER the active track (Video 1), not at the end");
+        m->undoStack()->undo();
+        {   // the main part of the button: same type as the active track, directly under it
+            QString audioId, capId; for (auto &t : m->project().tracks) { if (t.name == "Audio 1") audioId = t.id; if (t.name == "Captions") capId = t.id; }
+            m->setActiveTrack(audioId); const int n1 = m->project().tracks.size(); if (addBtn) addBtn->click();
+            int ai = m->project().trackIndex(audioId);
+            CHECK(m->project().tracks.size() == n1 + 1 && m->project().tracks[ai + 1].type == TrackType::Audio && m->project().tracks[ai + 1].name == "Audio 2", "clicking Add track with an audio track active adds an AUDIO track right under it");
+            m->undoStack()->undo();
+            m->setActiveTrack(capId); if (addBtn) addBtn->click();
+            const int ci = m->project().trackIndex(capId);
+            CHECK(m->project().tracks[ci + 1].type == TrackType::Title && m->project().tracks[ci + 1].name == "Captions 2", "with the caption track active it adds another caption track right under it");
+            m->undoStack()->undo();
+            m->setActiveTrack(m->project().firstTrackOfType(TrackType::Video));
+            CHECK(m->project().trackById(capId) != nullptr, "there is a separate Captions track by default");
+            m->mutate("again", [&](Project &p) { Track t; t.id = "tmp-added"; t.name = "Video 3"; t.type = TrackType::Video; p.tracks.insert(p.trackIndex(p.firstTrackOfType(TrackType::Video)) + 1, t); });
+        }
         // reorder: move the new track to the top via the same mutation the drag/menu uses, then undo
         const QString firstId = m->project().tracks[0].id;
         m->mutate("Move track", [](Project &p) { p.tracks.swapItemsAt(0, 1); });
@@ -620,12 +636,10 @@ int main(int argc, char **argv) {
         QTest::qWait(150);
         const QImage img = prev->grab().toImage();
         const double fr = 3.0 / 8.0; const int x = int(9 + fr * (sl->width() - 18));
-        const QPoint pt = sl->mapTo(prev, QPoint(x, sl->height() - 4));
-        const QColor c = img.pixelColor(pt);
-        CHECK(c.red() > 200 && c.green() > 140 && c.blue() < 120, QString("the marking line is drawn over the seek bar (pixel %1,%2,%3)").arg(c.red()).arg(c.green()).arg(c.blue()));
         const QPoint ptBar = mb->mapTo(prev, QPoint(x, mb->height() / 2));
         const QColor c2 = img.pixelColor(ptBar);
-        CHECK(c2.red() > 200 && c2.green() > 140 && c2.blue() < 120, "and the same line continues through the marking bar");
+        CHECK(c2.red() > 200 && c2.green() > 140 && c2.blue() < 120, "the marker line is drawn in the marking bar");
+        CHECK(prev->grab().toImage().pixelColor(sl->mapTo(prev, QPoint(x, 12))).blue() > 120, "no extension lines are drawn over the seek bar any more");
         prev->grab().save("/tmp/mveditor_markbar.png");
         // full screen keeps the marking bar
         prev->toggleFullscreen(); QTest::qWait(400);
@@ -640,6 +654,96 @@ int main(int argc, char **argv) {
         prev->playSource(vidId); QTest::qWait(150);
         CHECK(mb->markCount() == 0, "in Source mode the bar is empty");
         if (tlb3) tlb3->click();
+    }
+    std::cout << "- markers in full screen (M adds, D deletes) and marker heads" << std::endl;
+    {
+        auto *prev = w.findChild<PreviewMonitor *>();
+        QToolButton *tlb4 = nullptr; for (auto *b : prev->findChildren<QToolButton *>()) if (b->text() == "Timeline") tlb4 = b;
+        if (tlb4) tlb4->click();
+        Project saved = m->project(); const QString keepPath = m->filePath();
+        MediaItem v0; for (auto &mi : saved.media) if (mi.kind == "video") v0 = mi;
+        Project proj = Project::singleClip(v0, 0, 8.0); proj.tracks.clear(); proj.ensureDefaultTracks();
+        QString v1id; for (auto &t : proj.tracks) if (t.name == "Video 1") v1id = t.id;
+        proj.clips[0].trackId = v1id;
+        m->reset(proj, QString()); m->setActiveTrack(v1id); QTest::qWait(150);
+        prev->toggleFullscreen(); QTest::qWait(400);
+        FullscreenWindow *fs = prev->fullscreenWindow();
+        CHECK(fs != nullptr, "full screen for the marker keys");
+        auto press = [&](int key, const QString &text) { QKeyEvent ev(QEvent::KeyPress, key, Qt::NoModifier, text); QApplication::sendEvent(fs, &ev); };
+        m->setPlayhead(1.0); press(Qt::Key_M, "m");
+        CHECK(m->project().markerIndexesOnTrack(v1id).size() == 1 && fs->marks->markCount() == 1, "M in full screen adds a marker, shown on the full-screen marking bar");
+        m->setPlayhead(3.0); press(0x629, QString::fromUtf8("\xd8\xa9"));
+        CHECK(m->project().markerPairsOnTrack(v1id).size() == 1 && fs->marks->pairCount() == 1, "the Arabic key ة also adds (second marker completes the pair)");
+        m->setPlayhead(5.0); press(Qt::Key_M, "m");
+        CHECK(m->project().markerIndexesOnTrack(v1id).size() == 3 && m->project().markerPairsOnTrack(v1id).size() == 1, "a third marker stays single");
+        m->setPlayhead(3.1); press(Qt::Key_D, "d");
+        CHECK(m->project().markerIndexesOnTrack(v1id).size() == 2 && m->project().markerPairsOnTrack(v1id).isEmpty(), "D deletes the marker nearest to the playhead (its partner becomes single)");
+        m->setPlayhead(1.1); press(0x64A, QString::fromUtf8("\xd9\x8a"));
+        CHECK(m->project().markerIndexesOnTrack(v1id).size() == 1, "the Arabic key ي also deletes");
+        QTest::keyClick(fs, Qt::Key_Escape); QTest::qWait(250);
+        // marker heads: right-click on a head asks for the marker menu (the real menu is replaced by a spy here)
+        QObject::disconnect(prev, &PreviewMonitor::markerMenuRequested, nullptr, nullptr);
+        MarkingBar *mb = prev->markingBar(); SeekSlider *sl = prev->seekSlider();
+        m->mutate("m", [&](Project &p) { p.addMarker(2.0, v1id); }); QTest::qWait(100);
+        QSignalSpy spy(mb, &MarkingBar::markerMenuRequested);
+        const int hx = int(9 + (m->project().markers[m->project().markerIndexesOnTrack(v1id).first()].time / 8.0) * (sl->width() - 18));
+        QTest::mouseClick(mb, Qt::RightButton, Qt::NoModifier, QPoint(hx, mb->height() - 3));
+        CHECK(spy.count() == 1, "right-clicking a marker head on the marking bar requests the marker menu");
+        m->reset(saved, keepPath);
+    }
+    std::cout << "- titles and captions can be dragged on the picture" << std::endl;
+    {
+        auto *prev = w.findChild<PreviewMonitor *>();
+        QToolButton *tlb5 = nullptr; for (auto *b : prev->findChildren<QToolButton *>()) if (b->text() == "Timeline") tlb5 = b;
+        if (tlb5) tlb5->click();
+        Project saved = m->project(); const QString keepPath = m->filePath();
+        MediaItem v0; for (auto &mi : saved.media) if (mi.kind == "video") v0 = mi;
+        Project proj = Project::singleClip(v0, 0, 8.0); proj.tracks.clear(); proj.ensureDefaultTracks();
+        QString v1id, capId, titleId; for (auto &tr : proj.tracks) { if (tr.name == "Video 1") v1id = tr.id; if (tr.name == "Captions") capId = tr.id; if (tr.name == "Titles") titleId = tr.id; }
+        proj.clips[0].trackId = v1id;
+        Clip ti; ti.id = "title1"; ti.trackId = titleId; ti.start = 0; ti.in = 0; ti.out = 6; ti.title.text = "Hello title"; ti.title.posX = 0.5; ti.title.posY = 0.3; ti.title.fontSize = 120;
+        Clip ca; ca.id = "cap1"; ca.trackId = capId; ca.start = 0; ca.in = 0; ca.out = 6; ca.title.text = "A caption at the same time"; ca.title.posX = 0.5; ca.title.posY = 0.85; ca.title.fontSize = 70;
+        proj.clips.push_back(ti); proj.clips.push_back(ca);
+        m->reset(proj, QString()); m->setPlayhead(1.0); QTest::qWait(300);
+        QGraphicsView *gv = prev->view();
+        QVector<QGraphicsItem *> groups; for (QGraphicsItem *it : gv->scene()->items()) if (it->flags() & QGraphicsItem::ItemIsMovable) groups << it;
+        w.grab().save("/tmp/mveditor_titles.png");
+        CHECK(groups.size() == 2, QString("a title AND a caption (separate tracks) are shown at the same time (%1 movable texts)").arg(groups.size()));
+        auto drag = [&](const QString &clipId, QPoint delta) {
+            QGraphicsItem *target = nullptr; const QPointF want = QPointF(prev->view()->sceneRect().width() * m->project().clipById(clipId)->title.posX, prev->view()->sceneRect().height() * m->project().clipById(clipId)->title.posY);
+            double best = 1e18; for (auto *g : groups) { const double d = (g->sceneBoundingRect().center() - want).manhattanLength(); if (d < best) { best = d; target = g; } }
+            if (!target) return;
+            const QPoint a = gv->mapFromScene(target->sceneBoundingRect().center());
+            QWidget *vp = gv->viewport();
+            QMouseEvent pr(QEvent::MouseButtonPress, QPointF(a), vp->mapToGlobal(QPointF(a)), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier); QApplication::sendEvent(vp, &pr);
+            QMouseEvent mv(QEvent::MouseMove, QPointF(a + delta), vp->mapToGlobal(QPointF(a + delta)), Qt::NoButton, Qt::LeftButton, Qt::NoModifier); QApplication::sendEvent(vp, &mv);
+            QMouseEvent rl(QEvent::MouseButtonRelease, QPointF(a + delta), vp->mapToGlobal(QPointF(a + delta)), Qt::LeftButton, Qt::NoButton, Qt::NoModifier); QApplication::sendEvent(vp, &rl);
+            QTest::qWait(150);
+        };
+        const double x0 = m->project().clipById("title1")->title.posX, y0 = m->project().clipById("title1")->title.posY;
+        drag("title1", QPoint(70, 50));
+        const double x1 = m->project().clipById("title1")->title.posX, y1 = m->project().clipById("title1")->title.posY;
+        CHECK(x1 > x0 + 0.02 && y1 > y0 + 0.02, QString("dragging the title with the mouse moved it right and down (%1,%2 -> %3,%4)").arg(x0).arg(y0).arg(x1).arg(y1));
+        CHECK(m->selectedClip() == "title1", "dragging selects the title (its Properties appear)");
+        groups.clear(); for (QGraphicsItem *it : gv->scene()->items()) if (it->flags() & QGraphicsItem::ItemIsMovable) groups << it;
+        const double cx0 = m->project().clipById("cap1")->title.posX, cy0 = m->project().clipById("cap1")->title.posY;
+        drag("cap1", QPoint(-80, -60));
+        CHECK(m->project().clipById("cap1")->title.posX < cx0 - 0.02 && m->project().clipById("cap1")->title.posY < cy0 - 0.02, "a caption can be dragged too");
+        m->undoStack()->undo(); m->undoStack()->undo();
+        CHECK(near(m->project().clipById("title1")->title.posX, x0, 1e-6), "moving a text is undoable");
+        m->reset(saved, keepPath);
+    }
+    std::cout << "- export quality choices" << std::endl;
+    {
+        auto *ep = w.findChild<ExportPanel *>();
+        CHECK(ep != nullptr, "export panel present");
+        for (int hh : {480, 720, 1080}) {
+            ep->selectFormat("mp4-h264"); ep->setResolution(hh);
+            const ExportOptions o = ep->currentOptions();
+            CHECK(o.height == hh && o.width > 0 && o.width % 2 == 0 && o.format == "mp4-h264", QString("the export panel offers %1p (output %2x%3)").arg(hh).arg(o.width).arg(o.height));
+        }
+        CHECK(w.findChild<QAction *>("q720") && w.findChild<QAction *>("q1080") && w.findChild<QAction *>("q480"), "Export menu has quick 480p / 720p HD / 1080p Full HD entries");
+        ep->setResolution(0);
     }
     std::cout << "- Properties panel fits at minimum width (nothing cut off)" << std::endl;
     {

@@ -102,7 +102,11 @@ struct Marker {
     QString name;
     QString color;                      // optional "#rrggbb": tint of the pair that starts at this marker (set on the first marker "Ma" of a pair)
     QString trackId;                    // the track this marker belongs to (empty = the first video track)
+    QString id;                         // unique id (empty = legacy marker: paired by time order with the other legacy markers)
+    QString partner;                    // id of the marker it is paired with (empty = single, ignored by "Extract all")
+    bool end = false;                   // false = start of a pair (Ma), true = end of a pair (Mp)
 };
+struct MarkerPair { int start = -1, end = -1; };   // indexes into Project::markers
 
 struct ProjectSettings {
     int width = 1920, height = 1080;
@@ -148,6 +152,13 @@ public:
     QString markerTrack(const Marker &m) const;
     QVector<int> markerIndexesOnTrack(const QString &trackId) const;
     QString markerLabel(int index) const;            // custom name or "Ma" / "Mp"
+    // Pairing is by the ORDER YOU ADD THEM: a new marker pairs with the most recent single Ma of its track; otherwise it becomes a new single Ma.
+    // Adding a marker never re-pairs the others.
+    QVector<MarkerPair> markerPairsOnTrack(const QString &trackId) const;   // sorted by start time
+    bool markerIsEnd(int index) const;
+    int markerPairStart(int index) const;            // the Ma of the pair this marker belongs to (itself when single)
+    int addMarker(double time, const QString &trackId);
+    void removeMarker(int index);                    // its partner becomes a single Ma again
 
     void ensureDefaultTracks();
     // Nearest free start so [start, start+dur) doesn't overlap other clips on the track.

@@ -44,7 +44,8 @@ UTF-8 JSON. All times are seconds (floating point). The file never contains medi
                  "boxOpacity": 0.5, "posX": 0.5, "posY": 0.85, "kind": "title" }   // only for title clips
     }
   ],
-  "markers": [ { "time": 4.2, "name": "", "trackId": "t1", "color": "#39ff14" } ]
+  "markers": [ { "time": 4.2, "name": "", "trackId": "t1", "color": "#39ff14", "id": "k1", "partner": "k2", "end": false } ]
+  // id / partner / end: explicit pairing (end=false is Ma, end=true is Mp; no partner = single marker). Older files without ids are paired by time once when loaded.
   // markers belong to a track (empty trackId = first video track); name empty = automatic Ma/Mp by time order within the track;
   // markers are used in pairs (1st+2nd, 3rd+4th ...); color (optional, on the first marker of a pair) tints the area between the pair
 }

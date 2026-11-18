@@ -14,6 +14,7 @@
 #include <QUrl>
 #include <QVBoxLayout>
 #include <algorithm>
+#include <functional>
 #include <cmath>
 
 namespace mv {
@@ -60,6 +61,7 @@ void MarkingBar::paintEvent(QPaintEvent *) {
         const Mark &m = m_marks[i];
         const int x = int(pad + m.f * w);
         p.fillRect(QRect(x - 1, 0, 2, h), QColor(250, 190, 40));                // the marking line
+        { QPolygon head; head << QPoint(x - 4, h) << QPoint(x + 5, h) << QPoint(x, h - 7); p.setPen(Qt::NoPen); p.setBrush(QColor(250, 190, 40)); p.drawPolygon(head); }   // marker head at the bottom
         // label: "Ma" to the right of its line, "Mp" to the left of its line (inside the coloured area); skipped when there is no room
         const int tw = QFontMetrics(f).horizontalAdvance(m.label);
         double nb = 1e9;
@@ -71,7 +73,16 @@ void MarkingBar::paintEvent(QPaintEvent *) {
     }
 }
 void MarkingBar::seekTo(double x) { const double pad = 9; emit seekRequested(std::clamp((x - pad) / std::max(1.0, width() - 2 * pad), 0.0, 1.0)); }
-void MarkingBar::mousePressEvent(QMouseEvent *e) { if (e->button() == Qt::LeftButton) { m_down = true; emit dragStateChanged(true); seekTo(e->position().x()); } }
+int MarkingBar::markerAtX(double x, double y) const {                        // a marker head (or its line) under the pointer
+    const double pad = 9, w = width() - 2 * pad;
+    int best = -1; double bd = 7.5;
+    for (const Mark &m : m_marks) { const double d = std::fabs(pad + m.f * w - x); if (d < bd && (y >= height() - 10 || d < 3)) { bd = d; best = m.index; } }
+    return best;
+}
+void MarkingBar::mousePressEvent(QMouseEvent *e) {
+    if (e->button() == Qt::RightButton) { const int mi = markerAtX(e->position().x(), e->position().y()); if (mi >= 0) emit markerMenuRequested(mi, e->globalPosition().toPoint()); return; }
+    if (e->button() == Qt::LeftButton) { m_down = true; emit dragStateChanged(true); seekTo(e->position().x()); }
+}
 void MarkingBar::mouseMoveEvent(QMouseEvent *e) { if (m_down) seekTo(e->position().x()); }
 void MarkingBar::mouseReleaseEvent(QMouseEvent *) { if (m_down) { m_down = false; emit dragStateChanged(false); } }
 
@@ -132,11 +143,18 @@ FullscreenWindow::FullscreenWindow(QGraphicsView *view) : QWidget(nullptr, Qt::W
     connect(exitB, &QToolButton::clicked, this, &FullscreenWindow::exitRequested);
     m_hide.setSingleShot(true); m_hide.setInterval(2500);
     connect(&m_hide, &QTimer::timeout, this, &FullscreenWindow::hideBar);
+    m_toast = new QLabel(this); m_toast->setAlignment(Qt::AlignCenter); m_toast->hide();
+    m_toast->setStyleSheet("background: rgba(0,0,0,185); color: white; padding: 8px 18px; border-radius: 6px; font-size: 16pt; font-weight: bold;");
+    m_toastHide.setSingleShot(true); m_toastHide.setInterval(1500); connect(&m_toastHide, &QTimer::timeout, m_toast, &QLabel::hide);
 }
 void FullscreenWindow::showBar() {
     m_bar->show(); m_bar->raise();
     m_view->viewport()->unsetCursor(); unsetCursor();
     m_hide.start();
+}
+void FullscreenWindow::toast(const QString &text) {
+    m_toast->setText(text); m_toast->adjustSize();
+    m_toast->move((width() - m_toast->width()) / 2, 28); m_toast->raise(); m_toast->show(); m_toastHide.start();
 }
 void FullscreenWindow::hideBar() {
     if (m_bar->underMouse()) { m_hide.start(); return; }                    // never hide while the pointer is on the bar
@@ -280,6 +298,7 @@ PreviewMonitor::PreviewMonitor(ProjectModel *model, QWidget *parent) : QWidget(p
     connect(m_slider, &SeekSlider::dragStateChanged, this, [this](bool d) { m_sliderDrag = d; });
     connect(m_slider, &SeekSlider::seekRequested, this, &PreviewMonitor::onSeek);
     connect(m_markBar, &MarkingBar::seekRequested, this, &PreviewMonitor::onSeek);
+    connect(m_markBar, &MarkingBar::markerMenuRequested, this, &PreviewMonitor::markerMenuRequested);
     connect(m_markBar, &MarkingBar::dragStateChanged, this, [this](bool d) { m_sliderDrag = d; });
     connect(m, &ProjectModel::activeTrackChanged, this, &PreviewMonitor::updateMarkingBar);
     wire(m_player); wire(m_pre.pl);
@@ -391,6 +410,7 @@ void PreviewMonitor::enterFullscreen() {
     connect(m_fs, &FullscreenWindow::togglePlayRequested, this, &PreviewMonitor::togglePlay);
     connect(m_fs->slider, &SeekSlider::seekRequested, this, &PreviewMonitor::onSeek);
     connect(m_fs->marks, &MarkingBar::seekRequested, this, &PreviewMonitor::onSeek);
+    connect(m_fs->marks, &MarkingBar::markerMenuRequested, this, &PreviewMonitor::markerMenuRequested);
     connect(m_fs->marks, &MarkingBar::dragStateChanged, this, [this](bool d) { m_sliderDrag = d; });
     connect(m_fs->slider, &SeekSlider::dragStateChanged, this, [this](bool d) { m_sliderDrag = d; });
     connect(m_fs->abBtn, &QToolButton::clicked, this, &PreviewMonitor::abClick);
@@ -426,6 +446,8 @@ void PreviewMonitor::setCanvas(int w, int h) {
     fit();
 }
 void PreviewMonitor::fit() { m_view->fitInView(m_scene->sceneRect(), Qt::KeepAspectRatio); }
+
+void PreviewMonitor::toast(const QString &text) { if (m_fs) m_fs->toast(text); }
 
 void PreviewMonitor::showBusy(const QString &text) {
     if (text.isEmpty()) { m_busy->setVisible(false); return; }
@@ -811,6 +833,23 @@ void PreviewMonitor::syncTo(double t, bool play) {
     syncVoices(t, play);
 }
 
+namespace {
+// text + box + shadow as one item that can be dragged anywhere on the picture
+class TitleGroup : public QGraphicsItemGroup {
+public:
+    std::function<void()> onPress;
+    std::function<void(const QPointF &)> onRelease;
+    TitleGroup() { setFlag(QGraphicsItem::ItemIsMovable); setAcceptedMouseButtons(Qt::LeftButton); setCursor(Qt::SizeAllCursor); setToolTip(QObject::tr("Drag to move this text anywhere on the picture")); }
+protected:
+    void mousePressEvent(QGraphicsSceneMouseEvent *e) override { if (onPress) onPress(); QGraphicsItemGroup::mousePressEvent(e); }
+    void mouseReleaseEvent(QGraphicsSceneMouseEvent *e) override {
+        QGraphicsItemGroup::mouseReleaseEvent(e);
+        const QPointF d = pos();
+        if (onRelease && (std::fabs(d.x()) > 0.5 || std::fabs(d.y()) > 0.5)) onRelease(d);
+    }
+};
+}
+
 void PreviewMonitor::updateTitles(double t) {
     QByteArray key;
     const Project &p = m->project();
@@ -835,19 +874,31 @@ void PreviewMonitor::updateTitles(double t) {
         const QRectF br = txt->boundingRect();
         const double pad = c.title.box ? f.pixelSize() * 0.3 : 0;
         const double x = (m_cw - br.width() - 2 * pad) * c.title.posX + pad, y = (m_ch - br.height() - 2 * pad) * c.title.posY + pad;
+        auto *grp = new TitleGroup;
         if (c.title.box) {
             QColor bc(c.title.boxColor); bc.setAlphaF(c.title.boxOpacity);
-            auto *box = m_scene->addRect(QRectF(x - pad, y - pad, br.width() + 2 * pad, br.height() + 2 * pad), Qt::NoPen, bc);
-            box->setZValue(10); m_titleItems.push_back(box);
+            auto *box = new QGraphicsRectItem(QRectF(x - pad, y - pad, br.width() + 2 * pad, br.height() + 2 * pad));
+            box->setPen(Qt::NoPen); box->setBrush(bc); grp->addToGroup(box);
         }
         if (c.title.shadow) {
             auto *sh = new QGraphicsSimpleTextItem(txt->text()); sh->setFont(f);
             QColor sc(c.title.shadowColor); sc.setAlphaF(c.title.shadowOpacity); sh->setBrush(sc);
-            sh->setPos(x + c.title.shadowX * m_ch / 1080.0, y + c.title.shadowY * m_ch / 1080.0); sh->setZValue(10.5);
-            m_scene->addItem(sh); m_titleItems.push_back(sh);
+            sh->setPos(x + c.title.shadowX * m_ch / 1080.0, y + c.title.shadowY * m_ch / 1080.0); grp->addToGroup(sh);
         }
-        txt->setPos(x, y); txt->setZValue(11);
-        m_scene->addItem(txt); m_titleItems.push_back(txt);
+        txt->setPos(x, y); grp->addToGroup(txt);
+        grp->setZValue(11);
+        m_scene->addItem(grp); m_titleItems.push_back(grp);
+        const QString cid = c.id; const double bw = br.width(), bh = br.height(), cwv = m_cw, chv = m_ch;
+        grp->onPress = [this, cid] { m->selectClip(cid); };
+        grp->onRelease = [this, cid, bw, bh, pad, x, y, cwv, chv](const QPointF &d) {         // save the new position (queued: the item is deleted while rebuilding)
+            QMetaObject::invokeMethod(this, [this, cid, bw, bh, pad, x, y, cwv, chv, d] {
+                const double dw = cwv - bw - 2 * pad, dh = chv - bh - 2 * pad;
+                if (dw < 1 || dh < 1) return;
+                const double px = std::clamp((x + d.x() - pad) / dw, 0.0, 1.0), py = std::clamp((y + d.y() - pad) / dh, 0.0, 1.0);
+                m->mutate(tr("Move text"), [cid, px, py](Project &pr) { if (Clip *cc = pr.clipById(cid)) { cc->title.posX = px; cc->title.posY = py; } }, "titlemove:" + cid);
+                m_titleKey.clear();
+            }, Qt::QueuedConnection);
+        };
     }
 }
 
@@ -990,19 +1041,22 @@ void PreviewMonitor::styleAb(QToolButton *b) {
 void PreviewMonitor::updateMarkingBar() {
     if (!m_markBar) return;
     const Project &p = m->project();
-    QVector<MarkingBar::Mark> marks; QVector<MarkingBar::Pair> pairs; QVector<double> lines;
+    QVector<MarkingBar::Mark> marks; QVector<MarkingBar::Pair> pairs;
     const double dur = abDuration();
     if (m_mode != Mode::Source && dur > 0) {                                  // markers belong to the timeline, not to a source
         const QString tid = m->activeTrack();
-        const QVector<int> idx = p.markerIndexesOnTrack(tid);
-        for (int k = 0; k < idx.size(); ++k) {
-            const double f = std::clamp(p.markers[idx[k]].time / dur, 0.0, 1.0);
-            marks.push_back({f, p.markerLabel(idx[k]), k % 2 == 0}); lines.push_back(f);
+        for (int mi : p.markerIndexesOnTrack(tid)) {
+            const double f = std::clamp(p.markers[mi].time / dur, 0.0, 1.0);
+            marks.push_back({f, p.markerLabel(mi), !p.markerIsEnd(mi), mi});
         }
-        for (int k = 0; k + 1 < idx.size(); k += 2) { QColor c = TimelineView::pairColor(p, tid, k / 2); c.setAlpha(215); pairs.push_back({marks[k].f, marks[k + 1].f, c}); }
+        const QVector<MarkerPair> mp = p.markerPairsOnTrack(tid);
+        for (int k = 0; k < mp.size(); ++k) {
+            QColor c = TimelineView::pairColor(p, tid, k); c.setAlpha(215);
+            pairs.push_back({std::clamp(p.markers[mp[k].start].time / dur, 0.0, 1.0), std::clamp(p.markers[mp[k].end].time / dur, 0.0, 1.0), c});
+        }
     }
-    m_markBar->setData(marks, pairs); m_slider->setMarks(lines);
-    if (m_fs) { m_fs->marks->setData(marks, pairs); m_fs->slider->setMarks(lines); }
+    m_markBar->setData(marks, pairs);
+    if (m_fs) m_fs->marks->setData(marks, pairs);
 }
 
 void PreviewMonitor::updateAbUi() {

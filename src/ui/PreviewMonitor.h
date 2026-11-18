@@ -30,17 +30,12 @@ class SeekSlider : public QSlider {
 public:
     explicit SeekSlider(Qt::Orientation o, QWidget *parent = nullptr) : QSlider(o, parent) {}
     void setLoop(double a, double b) { m_la = a; m_lb = b; update(); }
-    void setMarks(const QVector<double> &fractions) { m_marks = fractions; update(); }   // marker lines drawn over the blue bar      // A-B repeat range as fractions (negative = none)
 signals:
     void seekRequested(double fraction);
     void dragStateChanged(bool down);
 protected:
     void paintEvent(QPaintEvent *e) override {
         QSlider::paintEvent(e);
-        if (!m_marks.isEmpty()) {                                           // the marking lines continue up over the seek bar (about 0.5 mm)
-            QPainter p(this); const double pad = 9, w = width() - 2 * pad;
-            for (double f : m_marks) p.fillRect(QRectF(pad + f * w - 1, 11, 2, height() - 11), QColor(250, 190, 40));
-        }
         if (m_la >= 0 && m_lb >= m_la) {
             QPainter p(this); const double pad = 9, w = width() - 2 * pad;
             const QRectF r(pad + m_la * w, height() / 2.0 - 7, std::max(2.0, (m_lb - m_la) * w), 14);
@@ -63,14 +58,13 @@ private:
     }
     bool m_down = false;
     double m_la = -1, m_lb = -1;
-    QVector<double> m_marks;
 };
 
 // The marking bar under the seek bar: the markers and pair colours of the active track, in step with the timeline.
 class MarkingBar : public QWidget {
     Q_OBJECT
 public:
-    struct Mark { double f = 0; QString label; bool first = true; };
+    struct Mark { double f = 0; QString label; bool first = true; int index = -1; };   // index = position in Project::markers
     struct Pair { double a = 0, b = 0; QColor c; };
     explicit MarkingBar(QWidget *parent = nullptr);
     void setData(const QVector<Mark> &marks, const QVector<Pair> &pairs);
@@ -81,6 +75,7 @@ public:
 signals:
     void seekRequested(double fraction);
     void dragStateChanged(bool down);
+    void markerMenuRequested(int markerIndex, const QPoint &globalPos);   // right-click on a marker head
 protected:
     void paintEvent(QPaintEvent *) override;
     void mousePressEvent(QMouseEvent *) override;
@@ -88,6 +83,7 @@ protected:
     void mouseReleaseEvent(QMouseEvent *) override;
 private:
     void seekTo(double x);
+    int markerAtX(double x, double y) const;
     QVector<Mark> m_marks;
     QVector<Pair> m_pairs;
     bool m_down = false;
@@ -128,6 +124,7 @@ public:
     bool barVisible() const { return m_bar->isVisible(); }
     QWidget *viewport() const { return m_view->viewport(); }
     void showBar();
+    void toast(const QString &text);              // short message in the middle of the top edge
 signals:
     void exitRequested();
     void togglePlayRequested();
@@ -141,7 +138,8 @@ private:
     void hideBar();
     QGraphicsView *m_view = nullptr;
     QWidget *m_bar = nullptr;
-    QTimer m_hide;
+    QLabel *m_toast = nullptr;
+    QTimer m_hide, m_toastHide;
 };
 
 class PreviewMonitor : public QWidget {
@@ -183,6 +181,7 @@ public:
     int abState() const { return m_ab; }
     FullscreenWindow *fullscreenWindow() const { return m_fs; }
     void showBusy(const QString &text);
+    void toast(const QString &text);              // short message on the picture (also visible in full screen)
 signals:
     void renderPreviewRequested();
     void timelinePlayRequested();      // Live is off: the main window renders / plays an exact preview
@@ -190,6 +189,7 @@ signals:
     void addToTimelineRequested(const QString &mediaId, double in, double out);
     void message(const QString &text);
     void modeChanged();
+    void markerMenuRequested(int markerIndex, const QPoint &globalPos);
     void extractAllRequested();
 protected:
     bool eventFilter(QObject *o, QEvent *e) override;

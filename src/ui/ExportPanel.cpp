@@ -39,7 +39,9 @@ ExportPanel::ExportPanel(ProjectModel *model, QWidget *parent) : QWidget(parent)
     m_videoBox = new QWidget; auto *vf = new QFormLayout(m_videoBox); vf->setContentsMargins(0, 0, 0, 0);
     m_res = new QComboBox;
     m_res->addItem(tr("Project size"), 0);
-    for (int h : {480, 720, 1080, 1440, 2160}) m_res->addItem(h == 2160 ? "4K (2160p)" : QString("%1p").arg(h), h);
+    const QMap<int, QString> names = {{480, tr("480p – SD")}, {720, tr("720p – HD")}, {1080, tr("1080p – Full HD")}, {1440, tr("1440p – 2K")}, {2160, tr("2160p – 4K")}};
+    for (int h : {480, 720, 1080, 1440, 2160}) m_res->addItem(names[h], h);
+    m_res->setToolTip(tr("Output size. Smaller = smaller file, bigger = sharper picture. Choosing more than your source gives a larger (not sharper) picture."));
     m_res->setCurrentIndex(m_res->findData(1080));
     m_fps = new QComboBox; m_fps->addItem(tr("Project rate"), 0.0); for (double v : {24.0, 25.0, 30.0, 50.0, 60.0}) m_fps->addItem(QString("%1 fps").arg(v), v);
     m_quality = new QComboBox; m_quality->addItem(tr("Draft (small file)"), "draft"); m_quality->addItem(tr("Standard"), "standard"); m_quality->addItem(tr("High"), "high"); m_quality->addItem(tr("Maximum"), "max");
@@ -99,6 +101,7 @@ ExportPanel::ExportPanel(ProjectModel *model, QWidget *parent) : QWidget(parent)
     onFormatChanged();
 }
 
+void ExportPanel::setResolution(int height) { const int i = m_res->findData(height); if (i >= 0) m_res->setCurrentIndex(i); }
 void ExportPanel::selectFormat(const QString &id) { int i = m_format->findData(id); if (i >= 0) m_format->setCurrentIndex(i); }
 
 void ExportPanel::onFormatChanged() {
@@ -136,6 +139,7 @@ ExportOptions ExportPanel::currentOptions() const {
 
 void ExportPanel::updateReencodeInfo() {
     const Project &p = m->project();
+    m_res->setItemText(0, tr("Project size (%1×%2)").arg(p.settings.width).arg(p.settings.height));
     // Stream copy ignores size / rate / quality settings, so evaluate it against the source as-is.
     ExportOptions probe = currentOptions();
     probe.streamCopy = true; probe.width = probe.height = 0; probe.fps = 0; probe.sampleRate = 0; probe.channels = 0;

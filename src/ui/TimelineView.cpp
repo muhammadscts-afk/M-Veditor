@@ -31,16 +31,16 @@ TimelineView::TimelineView(ProjectModel *model, QWidget *parent) : QAbstractScro
     // "Add track" button with its branching arrow, above the track headers
     m_addBtn = new QToolButton(viewport());
     m_addBtn->setText(tr("＋ Add track"));
-    m_addBtn->setToolTip(tr("Add a new track (video, audio, music, voice-over or titles)"));
-    m_addBtn->setPopupMode(QToolButton::InstantPopup);
+    m_addBtn->setToolTip(tr("Add a track directly under the active track, of the same type (click). The arrow lets you choose another type."));
+    m_addBtn->setPopupMode(QToolButton::MenuButtonPopup);
     m_addBtn->setToolButtonStyle(Qt::ToolButtonTextOnly);
-    m_addBtn->setStyleSheet("QToolButton { font-weight: bold; border: 1px solid #5a8de0; border-radius: 4px; padding: 2px 8px; }"
-                            "QToolButton::menu-indicator { subcontrol-origin: padding; subcontrol-position: right center; right: 4px; }");
+    m_addBtn->setStyleSheet("QToolButton { font-weight: bold; border: 1px solid #5a8de0; border-radius: 4px; padding: 2px 4px; }");
     auto *menu = new QMenu(m_addBtn);
     const QList<QPair<QString, int>> types = {{tr("Video track"), int(TrackType::Video)}, {tr("Audio track"), int(TrackType::Audio)},
-        {tr("Music track"), int(TrackType::Music)}, {tr("Voice-over track"), int(TrackType::Voice)}, {tr("Title track"), int(TrackType::Title)}};
+        {tr("Music track"), int(TrackType::Music)}, {tr("Voice-over track"), int(TrackType::Voice)}, {tr("Title track"), int(TrackType::Title)}, {tr("Caption track"), 5}};
     for (auto &t : types) menu->addAction(t.first, this, [this, ty = t.second] { emit addTrackRequested(ty); });
     m_addBtn->setMenu(menu);
+    connect(m_addBtn, &QToolButton::clicked, this, [this] { emit addTrackRequested(-1); });          // -1 = same type as the active track
     m_addBtn->setGeometry(5, 3, kHeaderW - 12, kRulerH - 6);
 
     connect(m, &ProjectModel::changed, this, [this] { updateScrollBars(); invalidate(); });
@@ -71,10 +71,9 @@ bool TimelineView::compatible(const Clip &c, const MediaItem *media, const Track
 
 QColor TimelineView::pairColor(const Project &p, const QString &trackId, int pairIndex) {
     static const QColor pal[] = {QColor(66, 133, 244), QColor(52, 168, 83), QColor(251, 188, 5), QColor(234, 67, 160), QColor(0, 188, 212), QColor(244, 81, 30)};
-    const QVector<int> idx = p.markerIndexesOnTrack(trackId);
+    const QVector<MarkerPair> pairs = p.markerPairsOnTrack(trackId);
     QColor c = pal[pairIndex % 6];
-    const int first = 2 * pairIndex;
-    if (first < idx.size()) { const QColor mc(p.markers[idx[first]].color); if (!p.markers[idx[first]].color.isEmpty() && mc.isValid()) c = mc; }
+    if (pairIndex >= 0 && pairIndex < pairs.size()) { const Marker &sm = p.markers[pairs[pairIndex].start]; const QColor mc(sm.color); if (!sm.color.isEmpty() && mc.isValid()) c = mc; }
     c.setAlpha(Theme::isDark() ? 112 : 122);       // clearly visible        // the chosen colour is used as is (never mixed with an earlier one), only very transparent
     return c;
 }
@@ -276,10 +275,10 @@ void TimelineView::paintStatic(QPainter &p) {
         for (int i = 0; i < pr.tracks.size(); ++i) {
             const int top = trackTop(i);
             if (top + pr.tracks[i].height < kRulerH || top > viewport()->height()) continue;
-            const QVector<int> idx = pr.markerIndexesOnTrack(pr.tracks[i].id);
-            for (int k = 0; k + 1 < idx.size(); k += 2) {
-                const int x0 = std::max(kHeaderW, int(timeToX(pr.markers[idx[k]].time))), x1 = std::min(viewport()->width(), int(timeToX(pr.markers[idx[k + 1]].time)));
-                if (x1 > x0) p.fillRect(QRect(x0, top, x1 - x0, pr.tracks[i].height - 1), pairColor(pr, pr.tracks[i].id, k / 2));
+            const QVector<MarkerPair> pairs = pr.markerPairsOnTrack(pr.tracks[i].id);
+            for (int k = 0; k < pairs.size(); ++k) {                          // only completed pairs are tinted; single markers just show their line
+                const int x0 = std::max(kHeaderW, int(timeToX(pr.markers[pairs[k].start].time))), x1 = std::min(viewport()->width(), int(timeToX(pr.markers[pairs[k].end].time)));
+                if (x1 > x0) p.fillRect(QRect(x0, top, x1 - x0, pr.tracks[i].height - 1), pairColor(pr, pr.tracks[i].id, k));
             }
         }
     {   // marker lines and small flags, only inside their own track

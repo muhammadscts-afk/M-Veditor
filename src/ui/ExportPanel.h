@@ -18,6 +18,7 @@ public:
     explicit ExportPanel(ProjectModel *model, QWidget *parent = nullptr);
     ExportOptions currentOptions() const;      // outputPath filled from folder + file name
     void selectFormat(const QString &id);
+    void setResolution(int height);                 // 0 = project size; 480, 720, 1080, 1440, 2160
     void setBusy(bool busy);
     void setProgress(double fraction, const QString &text);
     static QString uniquePath(const QString &path);

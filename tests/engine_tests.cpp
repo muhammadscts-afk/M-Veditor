@@ -108,8 +108,8 @@ static Clip clip(Project &p, const MediaItem &m, const QString &track, double st
 static QString trackV1 = "V1", trackV2 = "V2", trackA = "A1", trackM = "M1", trackVO = "VO", trackT = "T1";
 static Project newProject(const MediaItem &v) {
     Project p; p.ensureDefaultTracks(); p.media.push_back(v);
-    const char *ids[] = {"T1", "V1", "V2", "A1", "M1", "VO"};
-    for (int i = 0; i < 6; ++i) p.tracks[i].id = ids[i];
+    const char *ids[] = {"T1", "T2", "V1", "V2", "A1", "M1", "VO"};
+    for (int i = 0; i < 7; ++i) p.tracks[i].id = ids[i];
     p.settings.width = 640; p.settings.height = 360; p.settings.fps = 25;
     return p;
 }
@@ -376,6 +376,42 @@ int main(int argc, char **argv) {
         CHECK(!h.extractMarkedSegments(trackV1, &target, &moved, &err), QString("a locked track is not changed"));
     }
 
+    section("marker pairing follows the order you add them: no re-pairing, singles are ignored");
+    {
+        Project p; p.ensureDefaultTracks(); const QString v = p.firstTrackOfType(TrackType::Video);
+        const int a1 = p.addMarker(2, v), b1 = p.addMarker(6, v);
+        CHECK(p.markerLabel(a1) == "Ma" && p.markerLabel(b1) == "Mp" && p.markerPairsOnTrack(v).size() == 1, QString("two markers make a pair Ma / Mp"));
+        const int a2 = p.addMarker(4, v);                       // a new Ma INSIDE the existing pair
+        auto pr = p.markerPairsOnTrack(v);
+        CHECK(pr.size() == 1 && pr[0].start == a1 && pr[0].end == b1 && p.markerLabel(a2) == "Ma" && p.markers[a2].partner.isEmpty() && p.markerLabel(b1) == "Mp",
+              QString("a Ma added inside a pair stays single - the existing pair is untouched (%1 pairs)").arg(pr.size()));
+        const int b2 = p.addMarker(9, v);
+        pr = p.markerPairsOnTrack(v);
+        CHECK(pr.size() == 2 && p.markerLabel(b2) == "Mp" && p.markers[a2].partner == p.markers[b2].id && p.markers[a1].partner == p.markers[b1].id, QString("the next marker completes the new pair; the first pair is still (2,6)"));
+        const int s1 = p.addMarker(12, v);
+        CHECK(p.markerPairsOnTrack(v).size() == 2 && p.markerLabel(s1) == "Ma" && p.markers[s1].partner.isEmpty(), QString("a further marker starts a new single Ma"));
+        Clip c; c.id = "c1"; c.trackId = v; c.start = 0; c.in = 0; c.out = 20; p.clips.push_back(c);
+        QString target, err; QStringList moved;
+        CHECK(p.extractMarkedSegments(v, &target, &moved, &err) && moved.size() == 1, QString("extraction: overlapping pairs are merged (%1 piece): %2").arg(moved.size()).arg(err));
+        auto onT = p.clipsOnTrack(target); auto onV = p.clipsOnTrack(v);
+        CHECK(onT.size() == 1 && near(onT[0]->start, 2, 1e-6) && near(onT[0]->end(), 9, 1e-6) && onV.size() == 2 && near(onV[1]->start, 9, 1e-6), QString("the single marker at 12 s is ignored; only 2-9 s moved"));
+        // deleting one marker of a pair leaves its partner single; the next marker pairs with the most recent single Ma
+        Project q; q.ensureDefaultTracks(); const QString vq = q.firstTrackOfType(TrackType::Video);
+        const int x1 = q.addMarker(2, vq); const int x2 = q.addMarker(6, vq);
+        q.removeMarker(x2);
+        CHECK(q.markers.size() == 1 && q.markerPairsOnTrack(vq).isEmpty() && q.markerLabel(0) == "Ma" && q.markers[0].partner.isEmpty(), QString("deleting a marker leaves its partner single"));
+        Q_UNUSED(x1);
+        const int y = q.addMarker(8, vq);
+        CHECK(q.markerPairsOnTrack(vq).size() == 1 && q.markerLabel(y) == "Mp", QString("the next marker pairs with that single Ma again"));
+        // earlier time = always the Ma
+        Project r; r.ensureDefaultTracks(); const QString vr = r.firstTrackOfType(TrackType::Video);
+        const int o1 = r.addMarker(10, vr); const int o2 = r.addMarker(5, vr);
+        CHECK(r.markerLabel(o2) == "Ma" && r.markerLabel(o1) == "Mp" && near(r.markers[r.markerPairsOnTrack(vr)[0].start].time, 5, 1e-9), QString("a pair is always Ma (earlier) then Mp (later)"));
+        // save / load keeps the pairing
+        QString err2; Project l = Project::fromJson(p.toJson(), "x.mveproj", &err2);
+        CHECK(l.markerPairsOnTrack(v).size() == 2 && l.markers.size() == p.markers.size() && l.markerLabel(a2) == "Ma" && l.markerLabel(b1) == "Mp", QString("pairing survives save/load"));
+    }
+
     section("markers: per track, time-ordered Ma/Mp naming, colours, old projects");
     {
         Project p = newProject(v1);
@@ -484,6 +520,14 @@ int main(int argc, char **argv) {
     }
 
     // ----------------------------------------------------------------------------- stream copy
+    section("export quality: 480p / 720p HD / 1080p Full HD really produce those sizes");
+    for (int hh : {480, 720, 1080}) {
+        Project p = newProject(v1); clip(p, v1, trackV1, 0, 0, 2);
+        const int ww = int(std::lround(hh * 16.0 / 9.0)) & ~1;
+        auto r = render(p, opts("mp4-h264", QString("hd_%1.mp4").arg(hh), ww, hh));
+        CHECK(r.ok && r.out.item.height == hh && r.out.item.width == ww && near(r.out.item.duration, 2.0, 0.3), QString("%1p export is %2x%3: %4").arg(hh).arg(r.ok ? r.out.item.width : 0).arg(r.ok ? r.out.item.height : 0).arg(r.msg));
+    }
+
     section("lossless stream copy");
     {
         Project p = Project::singleClip(v1, 1, 4);
@@ -591,7 +635,7 @@ int main(int argc, char **argv) {
         QByteArray bytes = QJsonDocument(j).toJson();
         QString err;
         Project q = Project::fromJson(QJsonDocument::fromJson(bytes).object(), P("proj/test.mveproj"), &err);
-        CHECK(err.isEmpty() && q.clips.size() == 2 && q.media.size() == 2 && q.tracks.size() == 6, QString("roundtrip counts"));
+        CHECK(err.isEmpty() && q.clips.size() == 2 && q.media.size() == 2 && q.tracks.size() == 7, QString("roundtrip counts"));
         CHECK(q.clipById(c.id) && near(q.clipById(c.id)->fx.speed, 2, 1e-9) && q.clipById(c.id)->fx.transition == "dissolve" && near(q.clipById(c.id)->duration(), 1.5, 1e-9), QString("roundtrip clip props"));
         CHECK(q.markers.size() == 1 && q.clipById("title1")->title.text == "Hi", QString("roundtrip markers/titles"));
         // relink via relative path: move media next to the project

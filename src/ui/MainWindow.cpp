@@ -129,9 +129,10 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         menu.exec(gp);
     });
     connect(m_prev, &PreviewMonitor::modeChanged, this, &MainWindow::updateActions);
+    connect(m_prev, &PreviewMonitor::markerMenuRequested, this, [this](int idx, const QPoint &gp) { if (idx >= 0 && idx < m->project().markers.size()) showMarkerMenu(idx, m->project().markers[idx].time, gp); });
     connect(m_prev, &PreviewMonitor::extractAllRequested, this, &MainWindow::extractAllMarked);
     connect(m_prev, &PreviewMonitor::stopPressed, this, [this] { if (busy() && m_kind == JobKind::Preview) m_job->cancel(); });
-    connect(m_tl, &TimelineView::addTrackRequested, this, [this](int t) { addTrack(TrackType(t)); });
+    connect(m_tl, &TimelineView::addTrackRequested, this, [this](int t) { addTrack(t); });
     connect(m_prev, &PreviewMonitor::message, this, [this](const QString &t) { notify(t); });
     connect(m_prev, &PreviewMonitor::addToTimelineRequested, this, [this](const QString &id, double in, double out) { addClipFromMedia(id, {}, m->playhead(), in, out); });
     connect(m_props, &PropertiesPanel::speedDialogRequested, this, &MainWindow::applySpeedDialog);
@@ -231,6 +232,7 @@ void MainWindow::buildActions() {
     add("ripple", tr("Ripple delete (close the gap)"), QKeySequence("Shift+Delete"), [this] { deleteSelected(true); });
     add("selectall", tr("Select &all clips"), QKeySequence::SelectAll, [this] { QStringList ids; for (auto &c : m->project().clips) ids << c.id; m->setSelection(ids); });
     add("marker", tr("Add &marker"), QKeySequence("M"), [this] { addMarker(m->playhead()); });
+    add("delmarker", tr("Delete nearest marker\tD"), QKeySequence("D"), [this] { deleteNearestMarker(); }, tr("Delete the marker of the active track that is nearest to the playhead (D)"));
     add("regions", tr("Colour regions between markers"), {}, [this] { m_tl->setRegionsVisible(a["regions"]->isChecked()); AppSettings::s().setValue("timeline/regions", a["regions"]->isChecked()); });
     a["regions"]->setCheckable(true); a["regions"]->setChecked(AppSettings::s().value("timeline/regions", true).toBool());
     add("snap", tr("Snapping"), {}, [this] { m_tl->setSnapping(a["snap"]->isChecked()); AppSettings::setSnapping(a["snap"]->isChecked()); });
@@ -247,11 +249,13 @@ void MainWindow::buildActions() {
     add("watermark", tr("Add &watermark / logo…"), {}, [this] { addWatermark(); });
     add("pip", tr("Make picture-in-picture"), {}, [this] { applyPip(); });
     add("detach", tr("&Detach audio from video"), QKeySequence("Ctrl+Shift+D"), [this] { detachAudio(); });
-    add("track_v", tr("Add video track"), {}, [this] { addTrack(TrackType::Video); });
-    add("track_a", tr("Add audio track"), {}, [this] { addTrack(TrackType::Audio); });
-    add("track_m", tr("Add music track"), {}, [this] { addTrack(TrackType::Music); });
-    add("track_vo", tr("Add voice-over track"), {}, [this] { addTrack(TrackType::Voice); });
-    add("track_t", tr("Add title track"), {}, [this] { addTrack(TrackType::Title); });
+    add("track_v", tr("Add video track"), {}, [this] { addTrack(int(TrackType::Video)); });
+    add("track_a", tr("Add audio track"), {}, [this] { addTrack(int(TrackType::Audio)); });
+    add("track_m", tr("Add music track"), {}, [this] { addTrack(int(TrackType::Music)); });
+    add("track_vo", tr("Add voice-over track"), {}, [this] { addTrack(int(TrackType::Voice)); });
+    add("track_t", tr("Add title track"), {}, [this] { addTrack(int(TrackType::Title)); });
+    add("track_c", tr("Add caption track"), {}, [this] { addTrack(5); });
+    add("track_same", tr("Add track (same type, under the active track)"), {}, [this] { addTrack(-1); });
 
     add("extract", tr("&Extract audio…"), {}, [this] { extractAudio(); }, tr("Save the sound of a video as MP3, WAV, AAC or FLAC"));
     add("mute", tr("&Mute clip"), {}, [this] { editSelected(tr("Mute"), [](Clip &c) { c.fx.mute = !c.fx.mute; }); });
@@ -332,6 +336,9 @@ void MainWindow::buildActions() {
 
     add("exportv", tr("Export &video…"), QKeySequence("Ctrl+E"), [this] { m_dockExp->show(); m_dockExp->raise(); m_exp->selectFormat("mp4-h264"); }, tr("Open the export panel with a video format"));
     add("exporta", tr("Export &audio (MP3)…"), QKeySequence("Ctrl+Shift+E"), [this] { m_dockExp->show(); m_dockExp->raise(); m_exp->selectFormat("mp3"); });
+    add("q480", tr("MP4 480p (SD) – small file"), {}, [this] { m_dockExp->show(); m_dockExp->raise(); m_exp->selectFormat("mp4-h264"); m_exp->setResolution(480); startExport(); });
+    add("q720", tr("MP4 720p (HD)"), {}, [this] { m_dockExp->show(); m_dockExp->raise(); m_exp->selectFormat("mp4-h264"); m_exp->setResolution(720); startExport(); });
+    add("q1080", tr("MP4 1080p (Full HD)"), {}, [this] { m_dockExp->show(); m_dockExp->raise(); m_exp->selectFormat("mp4-h264"); m_exp->setResolution(1080); startExport(); });
     add("exportnow", tr("Export now"), {}, [this] { startExport(); });
     add("preview", tr("&Render preview of the timeline"), QKeySequence("F5"), [this] { renderPreview(); });
 
@@ -363,7 +370,7 @@ void MainWindow::buildMenus() {
     for (auto *k : {"cut", "copy", "paste", "dup", "selectall"}) edit->addAction(a[k]);
     edit->addSeparator();
     for (auto *k : {"split", "delete", "ripple"}) edit->addAction(a[k]);
-    edit->addSeparator(); edit->addAction(a["marker"]); edit->addAction(a["snap"]);
+    edit->addSeparator(); edit->addAction(a["marker"]); edit->addAction(a["delmarker"]); edit->addAction(a["snap"]);
 
     auto *video = menuBar()->addMenu(tr("&Video"));
     for (auto *k : {"speed", "speedup", "speeddown", "reverse", "rot", "fliph", "flipv"}) video->addAction(a[k]);
@@ -372,7 +379,7 @@ void MainWindow::buildMenus() {
     video->addSeparator(); video->addAction(a["detach"]);
     video->addSeparator();
     auto *tracks = video->addMenu(tr("Add track"));
-    for (auto *k : {"track_v", "track_a", "track_m", "track_vo", "track_t"}) tracks->addAction(a[k]);
+    for (auto *k : {"track_same", "track_v", "track_a", "track_m", "track_vo", "track_t", "track_c"}) tracks->addAction(a[k]);
 
     auto *audio = menuBar()->addMenu(tr("&Audio"));
     for (auto *k : {"extract", "detach", "mute", "normalize", "fade1", "silence", "record"}) audio->addAction(a[k]);
@@ -402,6 +409,8 @@ void MainWindow::buildMenus() {
 
     auto *ex = menuBar()->addMenu(tr("E&xport"));
     for (auto *k : {"exportv", "exporta", "exportnow", "preview", "extract"}) ex->addAction(a[k]);
+    auto *quick = ex->addMenu(tr("Quick export (uses the folder and name in the Export panel)"));
+    for (auto *k : {"q480", "q720", "q1080"}) quick->addAction(a[k]);
     ex->addSeparator(); ex->addAction(a["batch_a"]); ex->addAction(a["batch_v"]);
 
     auto *help = menuBar()->addMenu(tr("&Help"));
@@ -891,6 +900,19 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *ev) {
     if (fw && (fw->inherits("QLineEdit") || fw->inherits("QPlainTextEdit") || fw->inherits("QTextEdit") || fw->inherits("QAbstractSpinBox") || fw->inherits("QComboBox") || fw->inherits("QAbstractItemView"))) return false;
     if (QApplication::activePopupWidget() || QApplication::activeModalWidget()) return false;
     const int key = ke->key(); const QString txt = ke->text();
+    {   // markers also work in full screen (and on other keyboard layouts): M adds, D deletes the nearest one
+        quint32 vk0 = 0;
+#ifdef Q_OS_WIN
+        vk0 = ke->nativeVirtualKey();
+#endif
+        const bool isM = key == Qt::Key_M || vk0 == 0x4D || txt == QString::fromUtf8("\xd8\xa9");     // M  or  ة
+        const bool isD = key == Qt::Key_D || vk0 == 0x44 || txt == QString::fromUtf8("\xd9\x8a");     // D  or  ي
+        if ((isM || isD) && !ke->isAutoRepeat()) {
+            if (m_prev->mode() == PreviewMonitor::Mode::Source) { notify(tr("Markers belong to the timeline – switch to Timeline to add or delete markers.")); return true; }
+            if (isM) addMarker(m->playhead()); else deleteNearestMarker();
+            return true;
+        }
+    }
     quint32 vk = 0;
 #ifdef Q_OS_WIN
     vk = ke->nativeVirtualKey();
@@ -960,7 +982,11 @@ void MainWindow::applySpeedDialog() {
 
 void MainWindow::addTitle(const QString &kind, double at, const QString &trackId) {
     const Project &p = m->project();
-    QString tid = trackId.isEmpty() ? p.firstTrackOfType(TrackType::Title) : trackId;
+    QString tid = trackId;
+    if (tid.isEmpty()) {                                                      // titles -> first text track, captions / subtitles -> the last one ("Captions")
+        QStringList tt; for (const Track &t : p.tracks) if (t.type == TrackType::Title) tt << t.id;
+        if (!tt.isEmpty()) tid = kind == "title" ? tt.first() : tt.last();
+    }
     if (tid.isEmpty()) { notify(tr("There is no title track. Add one from Video > Add track."), true); return; }
     Clip c; c.id = newId("c"); c.trackId = tid; c.in = 0; c.out = 4;
     c.title.kind = kind;
@@ -1056,17 +1082,26 @@ void MainWindow::removeSilence() {
     det->start(mi->path, db, minS, mi->duration);
 }
 
-void MainWindow::addTrack(TrackType t) {
+void MainWindow::addTrack(int kind) {                                       // -1 = same type as the active track, 0..4 = a TrackType, 5 = caption track
+    const Project &pj = m->project();
+    const int ai = pj.trackIndex(m->activeTrack());
+    TrackType t = TrackType::Video; bool caption = false;
+    if (kind == 5) { t = TrackType::Title; caption = true; }
+    else if (kind >= 0) t = TrackType(kind);
+    else if (ai >= 0) { t = pj.tracks[ai].type; caption = t == TrackType::Title && pj.tracks[ai].name.startsWith("Caption"); }
     static const QHash<int, QString> names = {{int(TrackType::Video), "Video"}, {int(TrackType::Audio), "Audio"}, {int(TrackType::Music), "Music"}, {int(TrackType::Voice), "Voice-over"}, {int(TrackType::Title), "Titles"}};
-    m->mutate(tr("Add track"), [t](Project &p) {
-        int count = 1; for (auto &x : p.tracks) if (x.type == t) ++count;
-        Track n; n.id = newId("t"); n.type = t; n.name = QString("%1 %2").arg(names[int(t)]).arg(count);
-        int idx = p.tracks.size();                                         // audio-type tracks go to the bottom
-        if (t == TrackType::Title) idx = 0;
-        else if (t == TrackType::Video) { idx = 1; for (int i = 0; i < p.tracks.size(); ++i) if (p.tracks[i].type == TrackType::Video) idx = i + 1; }   // after the last video track = new top layer
-        p.tracks.insert(std::min<int>(idx, p.tracks.size()), n);
+    QString newName;
+    m->mutate(tr("Add track"), [&](Project &p) {
+        const QString base = caption ? QString("Captions") : names[int(t)];
+        int count = 1; for (auto &x : p.tracks) if (x.type == t && (!caption || x.name.startsWith("Caption"))) ++count;
+        auto taken = [&](const QString &n) { for (auto &x : p.tracks) if (x.name == n) return true; return false; };
+        newName = QString("%1 %2").arg(base).arg(count);
+        while (taken(newName)) newName = QString("%1 %2").arg(base).arg(++count);
+        Track n; n.id = newId("t"); n.type = t; n.name = newName;
+        const int idx = ai >= 0 ? std::min<int>(ai + 1, p.tracks.size()) : p.tracks.size();       // directly under the active track
+        p.tracks.insert(idx, n);
     });
-    notify(tr("Track added."));
+    notify(tr("Track \"%1\" added directly under the active track.").arg(newName));
 }
 
 void MainWindow::showTrackMenu(const QString &id, const QPoint &gp) {
@@ -1116,10 +1151,25 @@ void MainWindow::showClipMenu(const QString &id, const QPoint &gp) {
 void MainWindow::addMarker(double t, const QString &trackId) {
     const QString tid = trackId.isEmpty() ? m->activeTrack() : trackId;
     if (tid.isEmpty()) { notify(tr("Click a track first, then add a marker.")); return; }
-    m->mutate(tr("Add marker"), [t, tid](Project &p) { Marker mk; mk.time = t; mk.trackId = tid; p.markers.push_back(mk); });
-    int idx = -1; for (int i = 0; i < m->project().markers.size(); ++i) if (std::fabs(m->project().markers[i].time - t) < 1e-9 && m->project().markerTrack(m->project().markers[i]) == tid) idx = i;
+    int idx = -1;
+    m->mutate(tr("Add marker"), [&](Project &p) { idx = p.addMarker(t, tid); });
     const Track *trk = m->project().trackById(tid);
-    notify(tr("Marker %1 added on %2. Markers work in pairs (Ma, Mp): the area between them is tinted.").arg(m->project().markerLabel(idx), trk ? trk->name : QString()));
+    const QString label = m->project().markerLabel(idx);
+    const QString text = label == "Ma" ? tr("Marker Ma added on %1 – add a second marker to complete the pair (Mp).").arg(trk ? trk->name : QString())
+                                       : tr("Marker Mp added on %1 – the pair is complete.").arg(trk ? trk->name : QString());
+    notify(text); m_prev->toast(label + "  " + humanTime(t, true));
+}
+
+void MainWindow::deleteNearestMarker() {
+    const QString tid = m->activeTrack();
+    const QVector<int> idx = m->project().markerIndexesOnTrack(tid);
+    if (idx.isEmpty()) { notify(tr("There are no markers on the active track.")); return; }
+    const double ph = m->playhead();
+    int best = idx.first();
+    for (int i : idx) if (std::fabs(m->project().markers[i].time - ph) < std::fabs(m->project().markers[best].time - ph)) best = i;
+    const QString label = m->project().markerLabel(best); const double when = m->project().markers[best].time;
+    m->mutate(tr("Delete marker"), [best](Project &p) { p.removeMarker(best); });
+    notify(tr("Marker %1 at %2 deleted.").arg(label, humanTime(when, true))); m_prev->toast(tr("Deleted %1").arg(label));
 }
 
 void MainWindow::extractAllMarked() {
@@ -1138,9 +1188,7 @@ void MainWindow::extractAllMarked() {
 void MainWindow::setPairColor(int mi, const QString &color) {
     const Project &p = m->project();
     if (mi < 0 || mi >= p.markers.size()) return;
-    const QVector<int> idx = p.markerIndexesOnTrack(p.markerTrack(p.markers[mi]));
-    const int pos = idx.indexOf(mi);
-    const int first = idx[pos - pos % 2];                                    // the colour lives on the first marker (Ma) of the pair
+    const int first = p.markerPairStart(mi);                                 // the colour lives on the first marker (Ma) of the pair
     m->mutate(tr("Marker colour"), [first, color](Project &pr) { if (first < pr.markers.size()) pr.markers[first].color = color; });
 }
 

@@ -78,12 +78,13 @@ private:
     void addWatermark();
     void applyPip();
     void removeSilence();
-    void addTrack(TrackType t);
+    void addTrack(int kind);
     void editSelected(const QString &what, const std::function<void(Clip &)> &fn);
     void setTransition(const QString &t);
     void addMarker(double t, const QString &trackId = {});
     void showMarkerMenu(int markerIndex, double time, const QPoint &globalPos);
     void setPairColor(int markerIndex, const QString &color);
+    void deleteNearestMarker();
     void extractAllMarked();
     void jumpEdge(int dir);
     void stepSpeed(int dir);
